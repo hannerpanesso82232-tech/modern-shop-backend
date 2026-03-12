@@ -47,13 +47,13 @@ app.get('/', (req, res) => {
     res.json({ mensaje: "API de Modern Shop funcionando correctamente con Sockets 🚀" });
 });
 
-// --- RUTAS DE LA API ---
-app.use('/api/auth', require('./routes/authRoutes'));
-app.use('/api/productos', require('./routes/productoRoutes'));
-app.use('/api/pedidos', require('./routes/pedidoRoutes'));
-app.use('/api/categorias', require('./routes/categoriaRoutes'));
-app.use('/api/favoritos', require('./routes/favoritoRoutes'));
-app.use('/api/contabilidad', require('./routes/contabilidadRoutes'));
+// --- RUTAS DE LA API (Actualizadas para coincidir con tu Frontend) ---
+app.use('/auth', require('./routes/authRoutes'));
+app.use('/productos', require('./routes/productoRoutes'));
+app.use('/pedidos', require('./routes/pedidoRoutes'));
+app.use('/categorias', require('./routes/categoriaRoutes'));
+app.use('/favoritos', require('./routes/favoritoRoutes'));
+app.use('/contabilidad', require('./routes/contabilidadRoutes'));
 
 // Manejo de errores global
 app.use((err, req, res, next) => {
@@ -90,7 +90,6 @@ io.on('connection', (socket) => {
 });
 
 // 🔥 EL PUERTO DEBE SER DINÁMICO PARA LA NUBE 🔥
-// Render/Heroku asignan un puerto aleatorio a 'process.env.PORT'
 const PORT = process.env.PORT || 3000; 
 
 // Iniciar Base de Datos y Servidor
