@@ -1,0 +1,14 @@
+# Dependencias
+node_modules/
+
+# Archivos de entorno (contraseñas y credenciales)
+.env
+
+# Carpeta de imágenes locales (no queremos subir las fotos de prueba)
+uploads/
+
+# Logs y basura del sistema
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
