@@ -9,7 +9,7 @@ router.post('/recuperar-password', authController.recuperarPassword);
 router.get('/config/whatsapp', authController.getWhatsapp);
 
 // --- RUTAS DE GESTIÓN (SOLO ADMINISTRADOR) ---
-router.post('/registro', authController.registrar);
+router.post('/registro', verificarToken, verificarAdmin, authController.registrar);
 router.get('/admin/usuarios', verificarToken, verificarAdmin, authController.getUsuarios);
 router.put('/admin/usuarios/:id', verificarToken, verificarAdmin, authController.actualizarUsuarioPorAdmin); // 🔥 NUEVA RUTA PARA EDITAR TODA LA INFO
 router.put('/admin/usuarios/:id/password', verificarToken, verificarAdmin, authController.resetPassword);
