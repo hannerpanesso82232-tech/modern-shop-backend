@@ -147,5 +147,5 @@ Abono.belongsTo(Credito, { foreignKey: 'creditoId', as: 'Credito' });
 module.exports = { 
     sequelize, Usuario, Producto, Pedido, DetallePedido, 
     Categoria, Favorito, Direccion, Configuracion, Transaccion, 
-    RutaLogistica, Credito, Abono // <-- Exportamos los nuevos modelos
+    RutaLogistica, Credito, Abono 
 };
