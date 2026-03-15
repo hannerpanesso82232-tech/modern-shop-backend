@@ -32,7 +32,7 @@ exports.obtenerProductos = async (req, res) => {
 exports.crearProducto = async (req, res) => {
     try {
         const { nombre, descripcion, precio, stock, categoriaId, proveedor, costo_compra, margen_ganancia } = req.body;
-        const imagen_url = req.file ? `/uploads/${req.file.filename}` : null;
+        const imagen_url = req.file ? req.file.path : null; 
         
         const nuevoProducto = await Producto.create({
             nombre, descripcion, precio: parseFloat(precio || 0), stock: parseInt(stock || 0), 
@@ -70,11 +70,8 @@ exports.actualizarProducto = async (req, res) => {
         };
 
         if (req.file) {
-            if (producto.imagen_url) {
-                const rutaImagenAnterior = path.join(__dirname, '../uploads', path.basename(producto.imagen_url));
-                if (fs.existsSync(rutaImagenAnterior)) fs.unlinkSync(rutaImagenAnterior);
-            }
-            datosActualizados.imagen_url = `/uploads/${req.file.filename}`;
+            
+            datosActualizados.imagen_url = req.file.path;
         }
 
         await producto.update(datosActualizados);
@@ -139,9 +136,14 @@ exports.eliminarProducto = async (req, res) => {
         if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
 
         if (producto.imagen_url) {
+            // Igual que arriba, comentamos el fs.unlinkSync local.
+            // const rutaImagen = path.join(__dirname, '../uploads', path.basename(producto.imagen_url)); 
+            // if (fs.existsSync(rutaImagen)) fs.unlinkSync(rutaImagen);
+        }
+        /*if (producto.imagen_url) {
             const rutaImagen = path.join(__dirname, '../uploads', path.basename(producto.imagen_url)); 
             if (fs.existsSync(rutaImagen)) fs.unlinkSync(rutaImagen);
-        }
+        }*/
 
         await producto.destroy();
         await redisClient.del('catalogo_productos');
