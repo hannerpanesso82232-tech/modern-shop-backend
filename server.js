@@ -54,6 +54,7 @@ app.use('/pedidos', require('./routes/pedidoRoutes'));
 app.use('/categorias', require('./routes/categoriaRoutes'));
 app.use('/favoritos', require('./routes/favoritoRoutes'));
 app.use('/contabilidad', require('./routes/contabilidadRoutes'));
+app.use('/creditos', require('./routes/creditoRoutes'));
 
 // Manejo de errores global
 app.use((err, req, res, next) => {
