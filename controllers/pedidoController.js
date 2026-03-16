@@ -1,4 +1,5 @@
 const { Pedido, DetallePedido, Producto, Usuario, Transaccion, RutaLogistica, Configuracion, Credito, sequelize } = require('../models');
+const { Op } = require('sequelize'); // 🔥 IMPORTAMOS EL OPERADOR PARA BUSCAR TEXTOS 🔥
 
 // 🔥 MOTOR DE ENRUTAMIENTO DINÁMICO 🔥
 const asignarRutaLogistica = async (ciudadCliente, direccion) => {
@@ -122,7 +123,7 @@ exports.listarTodosLosPedidos = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Error interno al obtener pedidos." }); }
 };
 
-// 🔥 CORRECCIÓN: LÓGICA INTELIGENTE DE REVERSIÓN 🔥
+// 🔥 CORRECCIÓN DEFINITIVA: LÓGICA INTELIGENTE DE REVERSIÓN FINANCIERA 🔥
 exports.actualizarEstadoPedido = async (req, res) => {
     const t = await sequelize.transaction();
     try {
@@ -140,30 +141,34 @@ exports.actualizarEstadoPedido = async (req, res) => {
 
         // Si echamos el pedido para atrás (ya no está entregado)...
         if (estadoFormateado !== 'Entregado') {
-            // 1. Buscamos si tenía un ingreso directo de Contado en Finanzas y lo borramos
-            const transaccionExistente = await Transaccion.findOne({ where: { pedidoId: pedido.id }, transaction: t });
-            if (transaccionExistente) { 
-                await transaccionExistente.destroy({ transaction: t }); 
-            }
+            
+            // 1. Si se cobró de CONTADO: Borramos el ingreso directo en Finanzas
+            await Transaccion.destroy({ where: { pedidoId: pedido.id }, transaction: t });
 
-            // 2. Buscamos si tenía una deuda de Crédito en Cartera y la borramos
-            // Usamos un LIKE simple en la descripción para encontrarlo: `Factura Pedido #ID`
+            // 2. Si se mandó a CRÉDITO: Buscamos la deuda matriz en Cartera
             const creditoExistente = await Credito.findOne({
-                where: {
-                    descripcion: `Factura Pedido #${pedido.id}`
-                },
+                where: { descripcion: `Factura Pedido #${pedido.id}` },
                 transaction: t
             });
+
             if (creditoExistente) {
-                // Borrar abonos que le hayan hecho a esa factura (opcional pero seguro)
+                // 🔥 AQUÍ ESTÁ EL ARREGLO: Borrar de FINANZAS todos los ingresos de los abonos de este crédito
+                await Transaccion.destroy({
+                    where: {
+                        descripcion: {
+                            [Op.like]: `%Crédito #${creditoExistente.id}%` // Busca cualquier texto que contenga esto
+                        }
+                    },
+                    transaction: t
+                });
+
+                // Luego borramos los registros de Abonos
                 await sequelize.models.Abono.destroy({ where: { creditoId: creditoExistente.id }, transaction: t });
-                // Borrar la deuda
+                
+                // Finalmente borramos la Deuda en Cartera
                 await creditoExistente.destroy({ transaction: t });
             }
         }
-
-        // Si el estado SÍ ES "Entregado", no hacemos nada extra aquí porque el Modal del Frontend 
-        // ya se encarga de crear el Ingreso o el Crédito de forma específica.
 
         await t.commit();
         res.json({ mensaje: `Estado actualizado a ${estadoFormateado}`, pedido });
@@ -322,7 +327,6 @@ exports.obtenerHoraLimite = async (req, res) => {
     try {
         await Configuracion.sync();
         const config = await Configuracion.findByPk('hora_limite');
-        // Si no hay hora configurada, por defecto serán las 8:00 PM (20:00)
         res.json({ hora: config ? config.valor : '20:00' });
     } catch (error) { 
         res.status(500).json({ error: "Error al obtener hora límite" }); 
