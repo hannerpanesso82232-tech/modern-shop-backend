@@ -1,4 +1,4 @@
-const { Pedido, DetallePedido, Producto, Usuario, Transaccion, RutaLogistica, Configuracion, sequelize } = require('../models');
+const { Pedido, DetallePedido, Producto, Usuario, Transaccion, RutaLogistica, Configuracion, Credito, sequelize } = require('../models');
 
 // 🔥 MOTOR DE ENRUTAMIENTO DINÁMICO 🔥
 const asignarRutaLogistica = async (ciudadCliente, direccion) => {
@@ -122,30 +122,56 @@ exports.listarTodosLosPedidos = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Error interno al obtener pedidos." }); }
 };
 
+// 🔥 CORRECCIÓN: LÓGICA INTELIGENTE DE REVERSIÓN 🔥
 exports.actualizarEstadoPedido = async (req, res) => {
+    const t = await sequelize.transaction();
     try {
         const { id } = req.params;
         const { estado } = req.body;
-        const pedido = await Pedido.findByPk(id);
+        const pedido = await Pedido.findByPk(id, { transaction: t });
         
-        if (!pedido) return res.status(404).json({ error: "Pedido no encontrado" });
-
-        const estadoFormateado = estado.charAt(0).toUpperCase() + estado.slice(1).toLowerCase();
-        await pedido.update({ estado: estadoFormateado });
-
-        // CONTABILIDAD
-        if (estadoFormateado === 'Entregado') {
-            const transaccionExistente = await Transaccion.findOne({ where: { pedidoId: pedido.id } });
-            if (!transaccionExistente) {
-                await Transaccion.create({ tipo: 'INGRESO', monto: pedido.total, descripcion: `Venta - Orden #${pedido.id}`, categoria: 'Ventas Productos', pedidoId: pedido.id });
-            }
-        } else {
-            const transaccionExistente = await Transaccion.findOne({ where: { pedidoId: pedido.id } });
-            if (transaccionExistente) { await transaccionExistente.destroy(); }
+        if (!pedido) {
+            await t.rollback();
+            return res.status(404).json({ error: "Pedido no encontrado" });
         }
 
+        const estadoFormateado = estado.charAt(0).toUpperCase() + estado.slice(1).toLowerCase();
+        await pedido.update({ estado: estadoFormateado }, { transaction: t });
+
+        // Si echamos el pedido para atrás (ya no está entregado)...
+        if (estadoFormateado !== 'Entregado') {
+            // 1. Buscamos si tenía un ingreso directo de Contado en Finanzas y lo borramos
+            const transaccionExistente = await Transaccion.findOne({ where: { pedidoId: pedido.id }, transaction: t });
+            if (transaccionExistente) { 
+                await transaccionExistente.destroy({ transaction: t }); 
+            }
+
+            // 2. Buscamos si tenía una deuda de Crédito en Cartera y la borramos
+            // Usamos un LIKE simple en la descripción para encontrarlo: `Factura Pedido #ID`
+            const creditoExistente = await Credito.findOne({
+                where: {
+                    descripcion: `Factura Pedido #${pedido.id}`
+                },
+                transaction: t
+            });
+            if (creditoExistente) {
+                // Borrar abonos que le hayan hecho a esa factura (opcional pero seguro)
+                await sequelize.models.Abono.destroy({ where: { creditoId: creditoExistente.id }, transaction: t });
+                // Borrar la deuda
+                await creditoExistente.destroy({ transaction: t });
+            }
+        }
+
+        // Si el estado SÍ ES "Entregado", no hacemos nada extra aquí porque el Modal del Frontend 
+        // ya se encarga de crear el Ingreso o el Crédito de forma específica.
+
+        await t.commit();
         res.json({ mensaje: `Estado actualizado a ${estadoFormateado}`, pedido });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) { 
+        await t.rollback();
+        console.error("Error al actualizar estado del pedido:", error);
+        res.status(500).json({ error: error.message }); 
+    }
 };
 
 exports.actualizarRutaPedido = async (req, res) => {
