@@ -5,16 +5,27 @@ const { Usuario, Direccion, Configuracion } = require('../models');
 // --- REGISTRO ---
 exports.registrar = async (req, res) => {
     try {
-        const { nombre, cedula, email, password, rol, telefono, fecha_nacimiento, ciudad, direccion } = req.body;
+        // 🔥 AÑADIDO: limite_credito y dias_credito 🔥
+        const { nombre, cedula, email, password, rol, telefono, fecha_nacimiento, ciudad, direccion, limite_credito, dias_credito } = req.body;
+        
         if (!cedula) return res.status(400).json({ error: "La cédula es obligatoria" });
 
         const salt = await bcrypt.genSalt(10);
         const passwordHash = await bcrypt.hash(password, salt);
         
         const nuevoUsuario = await Usuario.create({
-            nombre, cedula, email, password_hash: passwordHash, 
-            rol: rol || 'CLIENTE', telefono, fechaNacimiento: fecha_nacimiento,
-            ciudad, direccion   
+            nombre, 
+            cedula, 
+            email, 
+            password_hash: passwordHash, 
+            rol: rol || 'CLIENTE', 
+            telefono, 
+            fechaNacimiento: fecha_nacimiento,
+            ciudad, 
+            direccion,
+            // 🔥 Guardamos la configuración de crédito si existe 🔥
+            limite_credito: limite_credito ? parseFloat(limite_credito) : 0,
+            dias_credito: dias_credito ? parseInt(dias_credito) : 30
         });
 
         res.status(201).json({ mensaje: "Usuario creado con éxito", id: nuevoUsuario.id });
@@ -152,7 +163,8 @@ exports.eliminarUsuario = async (req, res) => {
 exports.actualizarUsuarioPorAdmin = async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre, cedula, email, rol, telefono, ciudad, direccion } = req.body;
+        // 🔥 AÑADIDO: limite_credito y dias_credito 🔥
+        const { nombre, cedula, email, rol, telefono, ciudad, direccion, limite_credito, dias_credito } = req.body;
 
         const usuario = await Usuario.findByPk(id);
         if (!usuario) return res.status(404).json({ error: "Usuario no encontrado" });
@@ -169,7 +181,10 @@ exports.actualizarUsuarioPorAdmin = async (req, res) => {
             rol: rol || usuario.rol,
             telefono: telefono || usuario.telefono,
             ciudad: ciudad || usuario.ciudad,
-            direccion: direccion || usuario.direccion
+            direccion: direccion || usuario.direccion,
+            // 🔥 Actualizamos la configuración de crédito si el Admin la envía 🔥
+            limite_credito: limite_credito !== undefined ? parseFloat(limite_credito) : usuario.limite_credito,
+            dias_credito: dias_credito !== undefined ? parseInt(dias_credito) : usuario.dias_credito
         });
 
         // 🔥 MAGIA: AVISAR AL CLIENTE ESPECÍFICO QUE SUS DATOS FUERON ACTUALIZADOS 🔥
