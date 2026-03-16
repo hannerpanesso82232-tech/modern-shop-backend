@@ -11,7 +11,10 @@ const Usuario = sequelize.define('Usuario', {
     telefono: { type: DataTypes.STRING(20) },
     fechaNacimiento: { type: DataTypes.DATEONLY, field: 'fecha_nacimiento' },
     direccion: { type: DataTypes.TEXT, allowNull: true },
-    ciudad: { type: DataTypes.STRING(100), allowNull: true }
+    ciudad: { type: DataTypes.STRING(100), allowNull: true },
+    // 🔥 NUEVOS CAMPOS DE CRÉDITO 🔥
+    limite_credito: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 }, // 0 = Sin crédito o Contado estricto
+    dias_credito: { type: DataTypes.INTEGER, defaultValue: 30 } // Días de plazo por defecto
 }, { tableName: 'usuarios', timestamps: false });
 
 // --- 2. MODELO DE CATEGORÍAS ---
@@ -67,13 +70,13 @@ const Direccion = sequelize.define('Direccion', {
     usuarioId: { type: DataTypes.INTEGER, allowNull: false, field: 'usuario_id' }
 }, { tableName: 'direcciones', timestamps: true });
 
-// --- 8. MODELO DE CONFIGURACIONES (WHATSAPP) ---
+// --- 8. MODELO DE CONFIGURACIONES ---
 const Configuracion = sequelize.define('Configuracion', {
     clave: { type: DataTypes.STRING, primaryKey: true },
     valor: { type: DataTypes.STRING }
 }, { tableName: 'configuraciones', timestamps: false });
 
-// --- 9. MODELO: CONTABILIDAD (TRANSACCIONES) ---
+// --- 9. MODELO: CONTABILIDAD ---
 const Transaccion = sequelize.define('Transaccion', {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     tipo: { type: DataTypes.ENUM('INGRESO', 'EGRESO'), allowNull: false },
@@ -91,18 +94,20 @@ const RutaLogistica = sequelize.define('RutaLogistica', {
     dia_ruta: { type: DataTypes.STRING(50), allowNull: false } 
 }, { tableName: 'rutas_logisticas', timestamps: false });
 
-// --- 11. 🔥 NUEVO MODELO: CRÉDITO (CARTERA) 🔥 ---
+// --- 11. MODELO: CRÉDITO (CARTERA) ---
 const Credito = sequelize.define('Credito', {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     usuarioId: { type: DataTypes.INTEGER, allowNull: false, field: 'usuario_id' },
     monto_total: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
-    saldo: { type: DataTypes.DECIMAL(12, 2), allowNull: false }, // Lo que falta por pagar
+    saldo: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     descripcion: { type: DataTypes.STRING(255), allowNull: true },
     estado: { type: DataTypes.ENUM('VIGENTE', 'PAGADO'), defaultValue: 'VIGENTE' },
-    fecha: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
+    fecha: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+    // 🔥 NUEVO CAMPO: VENCIMIENTO 🔥
+    fecha_vencimiento: { type: DataTypes.DATE, allowNull: true }
 }, { tableName: 'creditos', timestamps: true });
 
-// --- 12. 🔥 NUEVO MODELO: ABONOS (PAGOS) 🔥 ---
+// --- 12. MODELO: ABONOS (PAGOS) ---
 const Abono = sequelize.define('Abono', {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     creditoId: { type: DataTypes.INTEGER, allowNull: false, field: 'credito_id' },
@@ -137,7 +142,6 @@ DetallePedido.belongsTo(Producto, { foreignKey: 'productoId', as: 'Producto' });
 Pedido.hasOne(Transaccion, { foreignKey: 'pedidoId', as: 'TransaccionContable' });
 Transaccion.belongsTo(Pedido, { foreignKey: 'pedidoId' });
 
-// 🔥 RELACIONES DE CARTERA 🔥
 Usuario.hasMany(Credito, { foreignKey: 'usuarioId', as: 'Creditos' });
 Credito.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
 
@@ -147,5 +151,5 @@ Abono.belongsTo(Credito, { foreignKey: 'creditoId', as: 'Credito' });
 module.exports = { 
     sequelize, Usuario, Producto, Pedido, DetallePedido, 
     Categoria, Favorito, Direccion, Configuracion, Transaccion, 
-    RutaLogistica, Credito, Abono 
+    RutaLogistica, Credito, Abono
 };

@@ -23,7 +23,7 @@ exports.obtenerCreditos = async (req, res) => {
 // 2. Crear un nuevo crédito manualmente (Fiar)
 exports.crearCredito = async (req, res) => {
     try {
-        const { usuarioId, monto_total, descripcion } = req.body;
+        const { usuarioId, monto_total, descripcion, fecha_vencimiento } = req.body;
 
         if (!usuarioId || !monto_total) {
             return res.status(400).json({ error: "Faltan datos obligatorios (Usuario o Monto)" });
@@ -32,11 +32,12 @@ exports.crearCredito = async (req, res) => {
         const nuevoCredito = await Credito.create({
             usuarioId,
             monto_total: parseFloat(monto_total),
-            saldo: parseFloat(monto_total), // Al inicio, el saldo es igual al monto total
-            descripcion: descripcion || 'Crédito de tienda'
+            saldo: parseFloat(monto_total),
+            descripcion: descripcion || 'Crédito de tienda',
+            // 🔥 Guardamos la fecha de vencimiento 🔥
+            fecha_vencimiento: fecha_vencimiento || new Date(new Date().setDate(new Date().getDate() + 30))
         });
 
-        // Traemos el crédito con los datos del usuario para devolverlo al Frontend
         const creditoCompleto = await Credito.findByPk(nuevoCredito.id, {
             include: [{ model: Usuario, as: 'Usuario', attributes: ['nombre', 'cedula', 'telefono'] }]
         });
