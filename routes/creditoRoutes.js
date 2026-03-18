@@ -1,21 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const creditoController = require('../controllers/creditoController');
-const authMiddleware = require('../middlewares/authMiddleware'); // 🔥 DESCOMENTADO: Necesario para saber quién está logueado
+const authMiddleware = require('../middlewares/authMiddleware'); // Traemos el verificador de sesión
 
-// 🔥 NUEVO: Obtener la cartera del cliente logueado (DEBE IR ANTES DE LAS RUTAS CON :id) 🔥
+// 🔥 1. LA RUTA DEL CLIENTE DEBE IR PRIMERO 🔥
 router.get('/mi-cartera', authMiddleware, creditoController.obtenerMiCredito);
 
-// Obtener todos los créditos (Para el Admin)
+// 2. Obtener todos los créditos (Para el Admin)
 router.get('/', creditoController.obtenerCreditos);
 
-// Crear un nuevo crédito
+// 3. Crear un nuevo crédito
 router.post('/', creditoController.crearCredito);
 
-// Registrar un abono a un crédito específico
+// 4. Registrar un abono a un crédito específico
 router.post('/:id/abono', creditoController.registrarAbono);
 
-// Eliminar un crédito (opcional)
+// 5. Eliminar un crédito
 router.delete('/:id', creditoController.eliminarCredito);
 
 module.exports = router;

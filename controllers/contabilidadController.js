@@ -1,4 +1,5 @@
-const { Transaccion, Producto, Pedido } = require('../models');
+const { Transaccion, Producto, Pedido, Credito, Abono, sequelize } = require('../models');
+const { Op } = require('sequelize');
 
 // 1. Obtener Resumen Financiero (KPIs)
 exports.obtenerResumen = async (req, res) => {
@@ -79,7 +80,7 @@ exports.registrarGasto = async (req, res) => {
     }
 };
 
-// 4. 🔥 NUEVO: ACTUALIZAR UNA TRANSACCIÓN 🔥
+// 4. 🔥 ACTUALIZAR UNA TRANSACCIÓN 🔥
 exports.actualizarTransaccion = async (req, res) => {
     try {
         const { id } = req.params;
@@ -99,20 +100,77 @@ exports.actualizarTransaccion = async (req, res) => {
     }
 };
 
-// 5. 🔥 NUEVO: ELIMINAR UNA TRANSACCIÓN 🔥
+// 5. 🔥 ELIMINAR UNA TRANSACCIÓN Y REVERTIR ABONOS DE CARTERA 🔥
 exports.eliminarTransaccion = async (req, res) => {
+    const t = await sequelize.transaction();
+
     try {
         const { id } = req.params;
-        const transaccion = await Transaccion.findByPk(id);
+        const transaccion = await Transaccion.findByPk(id, { transaction: t });
         
         if (!transaccion) {
+            await t.rollback();
             return res.status(404).json({ error: 'Transacción no encontrada' });
         }
 
-        await transaccion.destroy();
-        res.json({ mensaje: 'Transacción eliminada correctamente' });
+        // 🔥 LÓGICA INTELIGENTE: ¿Es un Abono a Cartera? 🔥
+        // Buscamos si la descripción contiene el patrón que usamos al registrar abonos: "(Crédito #ID)"
+        const esAbono = transaccion.descripcion && transaccion.descripcion.includes('(Crédito #');
+        
+        if (esAbono) {
+            // 1. Extraer el ID del Crédito de la descripción
+            const match = transaccion.descripcion.match(/\(Crédito #(\d+)\)/);
+            if (match && match[1]) {
+                const creditoId = parseInt(match[1]);
+                
+                // 2. Buscar el Crédito en Cartera
+                const credito = await Credito.findByPk(creditoId, { transaction: t });
+                
+                if (credito) {
+                    // 3. Buscar el Abono exacto en la tabla Abonos 
+                    // (Buscamos uno que coincida en monto y fecha aproximada)
+                    const fechaInicio = new Date(transaccion.fecha);
+                    fechaInicio.setHours(0,0,0,0);
+                    const fechaFin = new Date(transaccion.fecha);
+                    fechaFin.setHours(23,59,59,999);
+
+                    const abonoParaRevertir = await Abono.findOne({
+                        where: {
+                            creditoId: credito.id,
+                            monto: transaccion.monto,
+                            createdAt: {
+                                [Op.between]: [fechaInicio, fechaFin]
+                            }
+                        },
+                        transaction: t
+                    });
+
+                    // 4. Si encontramos el abono en el historial, lo borramos
+                    if (abonoParaRevertir) {
+                        await abonoParaRevertir.destroy({ transaction: t });
+                    }
+
+                    // 5. Devolverle la deuda al cliente (Sumar el saldo)
+                    const nuevoSaldo = parseFloat(credito.saldo) + parseFloat(transaccion.monto);
+                    
+                    // Si estaba pagado y ahora le sumamos deuda, vuelve a estar VIGENTE
+                    await credito.update({
+                        saldo: nuevoSaldo,
+                        estado: nuevoSaldo > 0 ? 'VIGENTE' : 'PAGADO'
+                    }, { transaction: t });
+                }
+            }
+        }
+
+        // Finalmente, eliminamos el registro del Libro Mayor (Contabilidad)
+        await transaccion.destroy({ transaction: t });
+        
+        // Confirmamos todos los cambios
+        await t.commit();
+        res.json({ mensaje: 'Transacción eliminada y cartera revertida correctamente' });
     } catch (error) {
+        await t.rollback();
         console.error("❌ Error al eliminar transacción:", error);
-        res.status(500).json({ error: 'Error al eliminar la transacción' });
+        res.status(500).json({ error: 'Error al eliminar la transacción y revertir' });
     }
 };
