@@ -3,11 +3,9 @@ const { Op } = require('sequelize');
 
 const asignarRutaLogistica = async (ciudadCliente, direccion) => {
     const texto = `${ciudadCliente || ''} ${direccion || ''}`.toUpperCase();
-    
     try {
         await RutaLogistica.sync();
         const reglasRutas = await RutaLogistica.findAll();
-        
         for (const regla of reglasRutas) {
             if (texto.includes(regla.ciudad.toUpperCase())) {
                 return regla.dia_ruta;
@@ -16,30 +14,18 @@ const asignarRutaLogistica = async (ciudadCliente, direccion) => {
     } catch (error) {
         console.error("Error al buscar ruta logística:", error);
     }
-    
     return 'A CONVENIR';
 };
 
-// 🔥 FUNCIÓN PARA VERIFICAR Y CALCULAR CUPO DE CRÉDITO 🔥
 const calcularCupoDisponible = async (usuarioId, limiteCredito) => {
-    if (!limiteCredito || limiteCredito <= 0) return null; // Si es 0 o null, no tiene crédito o tiene crédito infinito (depende de tu regla de negocio, asumiré que > 0 es el límite real)
-    
-    // Buscar todas las deudas activas (VIGENTES) de este cliente
+    if (!limiteCredito || limiteCredito <= 0) return null; 
     const creditosActivos = await Credito.findAll({
-        where: { 
-            usuarioId: usuarioId,
-            estado: 'VIGENTE' 
-        }
+        where: { usuarioId: usuarioId, estado: 'VIGENTE' }
     });
-
-    // Sumar el saldo de todo lo que debe actualmente
     const deudaActual = creditosActivos.reduce((suma, credito) => suma + parseFloat(credito.saldo || 0), 0);
-    
     return parseFloat(limiteCredito) - deudaActual;
 };
 
-
-// Crear pedido
 exports.crearPedido = async (req, res) => {
     if (!req.user || !req.user.id) return res.status(401).json({ error: "Sesión no válida." });
 
@@ -55,9 +41,6 @@ exports.crearPedido = async (req, res) => {
 
         const usuario = await Usuario.findByPk(usuarioId);
         
-        // -------------------------------------------------------------
-        // PRE-CÁLCULO DEL TOTAL PARA VALIDAR CRÉDITO ANTES DE DESCONTAR STOCK
-        // -------------------------------------------------------------
         let totalAcumuladoEstimado = 0;
         for (const item of productos) {
             const prodId = item.producto_id || item.id;
@@ -67,7 +50,6 @@ exports.crearPedido = async (req, res) => {
             totalAcumuladoEstimado += parseFloat(producto.precio) * item.cantidad;
         }
 
-        // 🔥 VALIDACIÓN ESTRICTA DE CRÉDITO (Si eligió FIAR) 🔥
         if (metodo_pago === 'CREDITO') {
             const limiteCredito = parseFloat(usuario.limite_credito || 0);
             
@@ -81,23 +63,23 @@ exports.crearPedido = async (req, res) => {
                 throw new Error(`Tu cupo disponible ($${cupoDisponible.toLocaleString('es-CO')}) no es suficiente para este pedido ($${totalAcumuladoEstimado.toLocaleString('es-CO')}).`);
             }
         }
-        // -------------------------------------------------------------
 
         const rutaAsignada = await asignarRutaLogistica(usuario?.ciudad, direccion);
 
+        // 🔥 GUARDAMOS EL METODO DE PAGO EN EL PEDIDO 🔥
         const nuevoPedido = await Pedido.create({
             usuarioId: usuarioId, 
             estado: 'Pendiente', 
             fecha: new Date(),
             total: 0,
             direccion: direccion, 
-            ruta: rutaAsignada    
+            ruta: rutaAsignada,
+            metodo_pago: metodo_pago || 'CONTADO' // <-- Guardamos la variable
         }, { transaction: t });
 
         let totalAcumulado = 0;
         const detallesParaNotificacion = []; 
 
-        // Ahora sí creamos el detalle y restamos stock (ya sabemos que puede pagar o tiene cupo)
         for (const item of productos) {
             const prodId = item.producto_id || item.id;
             const producto = await Producto.findByPk(prodId);
@@ -116,7 +98,6 @@ exports.crearPedido = async (req, res) => {
 
         await nuevoPedido.update({ total: totalAcumulado }, { transaction: t });
 
-        // 🔥 SI FUE A CRÉDITO, CREAMOS LA DEUDA EN CARTERA DE UNA VEZ 🔥
         if (metodo_pago === 'CREDITO') {
             const dias = parseInt(usuario.dias_credito || 30);
             const fechaVencimiento = new Date();
@@ -125,7 +106,7 @@ exports.crearPedido = async (req, res) => {
             await Credito.create({
                 usuarioId: usuario.id,
                 monto_total: totalAcumulado,
-                saldo: totalAcumulado, // Arranca debiendo el total
+                saldo: totalAcumulado, 
                 descripcion: `Factura Pedido #${nuevoPedido.id}`,
                 estado: 'VIGENTE',
                 fecha_vencimiento: fechaVencimiento.toISOString()
@@ -143,12 +124,12 @@ exports.crearPedido = async (req, res) => {
                 direccion: direccion,
                 ruta: rutaAsignada,
                 items: detallesParaNotificacion,
-                metodo_pago: metodo_pago, // Lo mandamos al panel para que sepa cómo lo pidieron
+                metodo_pago: metodo_pago || 'CONTADO', // Pasamos esto a la app
                 timestamp: new Date()
             });
         }
 
-        res.status(201).json({ mensaje: "Pedido confirmado", pedidoId: nuevoPedido.id, total: totalAcumulado, ruta: rutaAsignada, metodo_pago });
+        res.status(201).json({ mensaje: "Pedido confirmado", pedidoId: nuevoPedido.id, total: totalAcumulado, ruta: rutaAsignada, metodo_pago: metodo_pago || 'CONTADO' });
 
     } catch (error) {
         if (t) await t.rollback();
@@ -354,7 +335,6 @@ exports.cancelarPedidoCliente = async (req, res) => {
             }
         }
         
-        // Si este pedido había generado una deuda, la borramos porque se canceló
         const creditoExistente = await Credito.findOne({
             where: { descripcion: `Factura Pedido #${pedido.id}`, usuarioId: usuarioId },
             transaction: t
