@@ -1,9 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const creditoController = require('../controllers/creditoController');
-// const authMiddleware = require('../middlewares/authMiddleware'); // Opcional: proteger rutas
+const authMiddleware = require('../middlewares/authMiddleware'); // 🔥 DESCOMENTADO: Necesario para saber quién está logueado
 
-// Obtener todos los créditos
+// 🔥 NUEVO: Obtener la cartera del cliente logueado (DEBE IR ANTES DE LAS RUTAS CON :id) 🔥
+router.get('/mi-cartera', authMiddleware, creditoController.obtenerMiCredito);
+
+// Obtener todos los créditos (Para el Admin)
 router.get('/', creditoController.obtenerCreditos);
 
 // Crear un nuevo crédito

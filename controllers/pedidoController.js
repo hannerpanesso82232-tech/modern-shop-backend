@@ -1,26 +1,43 @@
 const { Pedido, DetallePedido, Producto, Usuario, Transaccion, RutaLogistica, Configuracion, Credito, sequelize } = require('../models');
-const { Op } = require('sequelize'); // 🔥 IMPORTAMOS EL OPERADOR PARA BUSCAR TEXTOS 🔥
+const { Op } = require('sequelize');
 
-// 🔥 MOTOR DE ENRUTAMIENTO DINÁMICO 🔥
 const asignarRutaLogistica = async (ciudadCliente, direccion) => {
     const texto = `${ciudadCliente || ''} ${direccion || ''}`.toUpperCase();
     
     try {
-        await RutaLogistica.sync(); // Asegura que la tabla exista
+        await RutaLogistica.sync();
         const reglasRutas = await RutaLogistica.findAll();
         
-        // Busca si alguna palabra clave de la base de datos coincide con la ciudad/dirección del cliente
         for (const regla of reglasRutas) {
             if (texto.includes(regla.ciudad.toUpperCase())) {
-                return regla.dia_ruta; // Retorna la ruta programada por el Admin
+                return regla.dia_ruta;
             }
         }
     } catch (error) {
         console.error("Error al buscar ruta logística:", error);
     }
     
-    return 'A CONVENIR'; // Fallback por defecto si no hay coincidencias
+    return 'A CONVENIR';
 };
+
+// 🔥 FUNCIÓN PARA VERIFICAR Y CALCULAR CUPO DE CRÉDITO 🔥
+const calcularCupoDisponible = async (usuarioId, limiteCredito) => {
+    if (!limiteCredito || limiteCredito <= 0) return null; // Si es 0 o null, no tiene crédito o tiene crédito infinito (depende de tu regla de negocio, asumiré que > 0 es el límite real)
+    
+    // Buscar todas las deudas activas (VIGENTES) de este cliente
+    const creditosActivos = await Credito.findAll({
+        where: { 
+            usuarioId: usuarioId,
+            estado: 'VIGENTE' 
+        }
+    });
+
+    // Sumar el saldo de todo lo que debe actualmente
+    const deudaActual = creditosActivos.reduce((suma, credito) => suma + parseFloat(credito.saldo || 0), 0);
+    
+    return parseFloat(limiteCredito) - deudaActual;
+};
+
 
 // Crear pedido
 exports.crearPedido = async (req, res) => {
@@ -29,7 +46,8 @@ exports.crearPedido = async (req, res) => {
     const t = await sequelize.transaction();
     
     try {
-        const { productos, direccion } = req.body; 
+        // 🔥 RECIBIMOS EL METODO DE PAGO 🔥
+        const { productos, direccion, metodo_pago } = req.body; 
         const usuarioId = req.user.id; 
 
         if (!productos || productos.length === 0) return res.status(400).json({ error: "El carrito está vacío" });
@@ -37,7 +55,34 @@ exports.crearPedido = async (req, res) => {
 
         const usuario = await Usuario.findByPk(usuarioId);
         
-        // Asignación de ruta esperando la Base de Datos
+        // -------------------------------------------------------------
+        // PRE-CÁLCULO DEL TOTAL PARA VALIDAR CRÉDITO ANTES DE DESCONTAR STOCK
+        // -------------------------------------------------------------
+        let totalAcumuladoEstimado = 0;
+        for (const item of productos) {
+            const prodId = item.producto_id || item.id;
+            const producto = await Producto.findByPk(prodId);
+            if (!producto) throw new Error(`El producto no existe.`);
+            if (producto.stock < item.cantidad) throw new Error(`Stock insuficiente para ${producto.nombre}.`);
+            totalAcumuladoEstimado += parseFloat(producto.precio) * item.cantidad;
+        }
+
+        // 🔥 VALIDACIÓN ESTRICTA DE CRÉDITO (Si eligió FIAR) 🔥
+        if (metodo_pago === 'CREDITO') {
+            const limiteCredito = parseFloat(usuario.limite_credito || 0);
+            
+            if (limiteCredito === 0) {
+                 throw new Error("No tienes un cupo de crédito asignado. Selecciona Pago de Contado.");
+            }
+
+            const cupoDisponible = await calcularCupoDisponible(usuarioId, limiteCredito);
+            
+            if (cupoDisponible !== null && totalAcumuladoEstimado > cupoDisponible) {
+                throw new Error(`Tu cupo disponible ($${cupoDisponible.toLocaleString('es-CO')}) no es suficiente para este pedido ($${totalAcumuladoEstimado.toLocaleString('es-CO')}).`);
+            }
+        }
+        // -------------------------------------------------------------
+
         const rutaAsignada = await asignarRutaLogistica(usuario?.ciudad, direccion);
 
         const nuevoPedido = await Pedido.create({
@@ -52,13 +97,11 @@ exports.crearPedido = async (req, res) => {
         let totalAcumulado = 0;
         const detallesParaNotificacion = []; 
 
+        // Ahora sí creamos el detalle y restamos stock (ya sabemos que puede pagar o tiene cupo)
         for (const item of productos) {
             const prodId = item.producto_id || item.id;
             const producto = await Producto.findByPk(prodId);
             
-            if (!producto) throw new Error(`El producto no existe.`);
-            if (producto.stock < item.cantidad) throw new Error(`Stock insuficiente para ${producto.nombre}.`);
-
             await DetallePedido.create({
                 pedidoId: nuevoPedido.id,
                 productoId: prodId,
@@ -72,6 +115,23 @@ exports.crearPedido = async (req, res) => {
         }
 
         await nuevoPedido.update({ total: totalAcumulado }, { transaction: t });
+
+        // 🔥 SI FUE A CRÉDITO, CREAMOS LA DEUDA EN CARTERA DE UNA VEZ 🔥
+        if (metodo_pago === 'CREDITO') {
+            const dias = parseInt(usuario.dias_credito || 30);
+            const fechaVencimiento = new Date();
+            fechaVencimiento.setDate(fechaVencimiento.getDate() + dias);
+            
+            await Credito.create({
+                usuarioId: usuario.id,
+                monto_total: totalAcumulado,
+                saldo: totalAcumulado, // Arranca debiendo el total
+                descripcion: `Factura Pedido #${nuevoPedido.id}`,
+                estado: 'VIGENTE',
+                fecha_vencimiento: fechaVencimiento.toISOString()
+            }, { transaction: t });
+        }
+
         await t.commit();
 
         const io = req.app.get('socketio') || req.io; 
@@ -83,11 +143,12 @@ exports.crearPedido = async (req, res) => {
                 direccion: direccion,
                 ruta: rutaAsignada,
                 items: detallesParaNotificacion,
+                metodo_pago: metodo_pago, // Lo mandamos al panel para que sepa cómo lo pidieron
                 timestamp: new Date()
             });
         }
 
-        res.status(201).json({ mensaje: "Pedido confirmado", pedidoId: nuevoPedido.id, total: totalAcumulado, ruta: rutaAsignada });
+        res.status(201).json({ mensaje: "Pedido confirmado", pedidoId: nuevoPedido.id, total: totalAcumulado, ruta: rutaAsignada, metodo_pago });
 
     } catch (error) {
         if (t) await t.rollback();
@@ -123,7 +184,6 @@ exports.listarTodosLosPedidos = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Error interno al obtener pedidos." }); }
 };
 
-// 🔥 CORRECCIÓN DEFINITIVA: LÓGICA INTELIGENTE DE REVERSIÓN FINANCIERA 🔥
 exports.actualizarEstadoPedido = async (req, res) => {
     const t = await sequelize.transaction();
     try {
@@ -139,33 +199,25 @@ exports.actualizarEstadoPedido = async (req, res) => {
         const estadoFormateado = estado.charAt(0).toUpperCase() + estado.slice(1).toLowerCase();
         await pedido.update({ estado: estadoFormateado }, { transaction: t });
 
-        // Si echamos el pedido para atrás (ya no está entregado)...
         if (estadoFormateado !== 'Entregado') {
-            
-            // 1. Si se cobró de CONTADO: Borramos el ingreso directo en Finanzas
             await Transaccion.destroy({ where: { pedidoId: pedido.id }, transaction: t });
 
-            // 2. Si se mandó a CRÉDITO: Buscamos la deuda matriz en Cartera
             const creditoExistente = await Credito.findOne({
                 where: { descripcion: `Factura Pedido #${pedido.id}` },
                 transaction: t
             });
 
             if (creditoExistente) {
-                // 🔥 AQUÍ ESTÁ EL ARREGLO: Borrar de FINANZAS todos los ingresos de los abonos de este crédito
                 await Transaccion.destroy({
                     where: {
                         descripcion: {
-                            [Op.like]: `%Crédito #${creditoExistente.id}%` // Busca cualquier texto que contenga esto
+                            [Op.like]: `%Crédito #${creditoExistente.id}%` 
                         }
                     },
                     transaction: t
                 });
 
-                // Luego borramos los registros de Abonos
                 await sequelize.models.Abono.destroy({ where: { creditoId: creditoExistente.id }, transaction: t });
-                
-                // Finalmente borramos la Deuda en Cartera
                 await creditoExistente.destroy({ transaction: t });
             }
         }
@@ -191,7 +243,6 @@ exports.actualizarRutaPedido = async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 };
 
-// 🔥 GESTIÓN DE RUTAS DINÁMICAS 🔥
 exports.obtenerRutasLogistica = async (req, res) => {
     try {
         await RutaLogistica.sync();
@@ -221,7 +272,7 @@ exports.eliminarRutaLogistica = async (req, res) => {
 exports.procesarDevolucion = async (req, res) => {
     const t = await sequelize.transaction();
     try {
-        const { id } = req.params; // ID del Pedido
+        const { id } = req.params; 
         const { productoId, cantidadDevuelta, precioUnitario } = req.body;
 
         const pedido = await Pedido.findByPk(id, { transaction: t });
@@ -235,13 +286,11 @@ exports.procesarDevolucion = async (req, res) => {
         if (!detalle) throw new Error("El producto no pertenece a este pedido");
         if (cantidadDevuelta > detalle.cantidad) throw new Error("No puedes devolver más de lo que se compró");
 
-        // 1. Restaurar el Stock
         const producto = await Producto.findByPk(productoId, { transaction: t });
         if (producto) {
             await producto.update({ stock: producto.stock + cantidadDevuelta }, { transaction: t });
         }
 
-        // 2. Modificar el Detalle
         const nuevaCantidad = detalle.cantidad - cantidadDevuelta;
         if (nuevaCantidad === 0) {
             await detalle.destroy({ transaction: t });
@@ -249,12 +298,10 @@ exports.procesarDevolucion = async (req, res) => {
             await detalle.update({ cantidad: nuevaCantidad }, { transaction: t });
         }
 
-        // 3. Restar el valor del total del pedido
         const valorADescontar = cantidadDevuelta * precioUnitario;
         const nuevoTotal = parseFloat(pedido.total) - valorADescontar;
         await pedido.update({ total: nuevoTotal }, { transaction: t });
 
-        // 4. Contabilidad (Si ya estaba entregado, generamos un Egreso por reembolso)
         if (pedido.estado === 'Entregado') {
             await Transaccion.create({
                 tipo: 'EGRESO',
@@ -274,14 +321,12 @@ exports.procesarDevolucion = async (req, res) => {
     }
 };
 
-// 🔥 CANCELAR PEDIDO POR EL CLIENTE 🔥
 exports.cancelarPedidoCliente = async (req, res) => {
     const t = await sequelize.transaction();
     try {
         const { id } = req.params;
         const usuarioId = req.user.id;
 
-        // 1. Buscar el pedido asegurando que le pertenece al cliente
         const pedido = await Pedido.findOne({
             where: { id: id, usuarioId: usuarioId },
             include: [{ model: DetallePedido, as: 'Detalles' }],
@@ -293,16 +338,13 @@ exports.cancelarPedidoCliente = async (req, res) => {
             return res.status(404).json({ error: "Pedido no encontrado o no te pertenece." });
         }
 
-        // 2. Verificar que esté en estado "Pendiente"
         if (pedido.estado !== 'Pendiente') {
             await t.rollback();
             return res.status(400).json({ error: "Solo puedes cancelar pedidos que están Pendientes." });
         }
 
-        // 3. Cambiar el estado a Cancelado
         await pedido.update({ estado: 'Cancelado' }, { transaction: t });
 
-        // 4. Devolver el stock de los productos al inventario
         if (pedido.Detalles && pedido.Detalles.length > 0) {
             for (const item of pedido.Detalles) {
                 const producto = await Producto.findByPk(item.productoId, { transaction: t });
@@ -310,6 +352,16 @@ exports.cancelarPedidoCliente = async (req, res) => {
                     await producto.update({ stock: producto.stock + item.cantidad }, { transaction: t });
                 }
             }
+        }
+        
+        // Si este pedido había generado una deuda, la borramos porque se canceló
+        const creditoExistente = await Credito.findOne({
+            where: { descripcion: `Factura Pedido #${pedido.id}`, usuarioId: usuarioId },
+            transaction: t
+        });
+        
+        if(creditoExistente){
+             await creditoExistente.destroy({ transaction: t });
         }
 
         await t.commit();
@@ -322,7 +374,6 @@ exports.cancelarPedidoCliente = async (req, res) => {
     }
 }; 
 
-// 🔥 GESTIÓN DE HORA LÍMITE DE PEDIDOS 🔥
 exports.obtenerHoraLimite = async (req, res) => {
     try {
         await Configuracion.sync();

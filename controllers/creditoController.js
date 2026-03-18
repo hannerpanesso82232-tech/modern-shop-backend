@@ -1,6 +1,6 @@
 const { Credito, Abono, Usuario, Transaccion, sequelize } = require('../models');
 
-// 1. Obtener toda la cartera (Créditos y sus abonos)
+// 1. Obtener toda la cartera (Créditos y sus abonos) - SOLO PARA ADMIN
 exports.obtenerCreditos = async (req, res) => {
     try {
         const creditos = await Credito.findAll({
@@ -124,5 +124,43 @@ exports.eliminarCredito = async (req, res) => {
     } catch (error) {
         console.error("❌ Error en eliminarCredito:", error);
         res.status(500).json({ error: "Error al eliminar el crédito" });
+    }
+};
+
+// 5. 🔥 NUEVO: Obtener Mi Crédito (Para el Cliente) 🔥
+exports.obtenerMiCredito = async (req, res) => {
+    try {
+        const usuarioId = req.user.id;
+
+        // Buscar todos los créditos asociados a este usuario
+        const creditos = await Credito.findAll({
+            where: { usuarioId: usuarioId },
+            include: [
+                { 
+                    model: Abono, 
+                    as: 'Abonos',
+                    order: [['createdAt', 'DESC']] // Abonos más recientes primero
+                }
+            ],
+            order: [['createdAt', 'DESC']] // Créditos más recientes primero
+        });
+
+        // Obtener el límite de crédito del usuario
+        const usuario = await Usuario.findByPk(usuarioId, { attributes: ['limite_credito', 'dias_credito'] });
+
+        // Calcular la deuda total actual (Solo créditos VIGENTES)
+        const deudaTotal = creditos
+            .filter(c => c.estado === 'VIGENTE')
+            .reduce((suma, c) => suma + parseFloat(c.saldo), 0);
+
+        res.json({
+            limite_credito: parseFloat(usuario.limite_credito || 0),
+            dias_credito: parseInt(usuario.dias_credito || 30),
+            deuda_total: deudaTotal,
+            historial_creditos: creditos
+        });
+    } catch (error) {
+        console.error("❌ Error en obtenerMiCredito:", error);
+        res.status(500).json({ error: "Error al obtener la información de crédito." });
     }
 };

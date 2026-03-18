@@ -36,7 +36,6 @@ const permitirRoles = (...roles) => {
 };
 
 // 🔥 NUEVO: Función específica para verificar si es Admin 🔥
-// Esta era la función que faltaba y causaba el "TypeError" en server.js
 const verificarAdmin = (req, res, next) => {
     if (!req.user || req.user.rol !== 'ADMIN') {
         return res.status(403).json({ error: "Acceso denegado. Se requieren permisos de Administrador." });
@@ -44,5 +43,9 @@ const verificarAdmin = (req, res, next) => {
     next();
 };
 
-// Exportamos las 3 funciones para que no haya errores
-module.exports = { verificarToken, permitirRoles, verificarAdmin };
+// 🔥 TRUCO MAGISTRAL DE EXPORTACIÓN 🔥
+// Exportamos verificarToken como la función por defecto. Así, si usas "authMiddleware" directo, funciona.
+module.exports = verificarToken;
+// Y adjuntamos las otras por si en alguna ruta necesitas destructurar { verificarAdmin }
+module.exports.permitirRoles = permitirRoles;
+module.exports.verificarAdmin = verificarAdmin;
