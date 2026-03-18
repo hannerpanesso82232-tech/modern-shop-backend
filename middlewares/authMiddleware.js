@@ -35,10 +35,11 @@ const verificarAdmin = (req, res, next) => {
     next();
 };
 
-// 🔥 LA SOLUCIÓN DEFINITIVA A LOS CRASHEOS DE RENDER 🔥
-// Exportamos la función principal para que no se rompan las rutas viejas
-module.exports = verificarToken;
-// Y adjuntamos las propiedades para que las rutas nuevas (como la de créditos) funcionen perfecto
-module.exports.verificarToken = verificarToken;
-module.exports.permitirRoles = permitirRoles;
-module.exports.verificarAdmin = verificarAdmin;
+// 🔥 EXPORTACIÓN INDESTRUCTIBLE 🔥
+// Permite que otras rutas de tu sistema lo usen como quieran sin romper el servidor
+const exportacionSegura = verificarToken;
+exportacionSegura.verificarToken = verificarToken;
+exportacionSegura.permitirRoles = permitirRoles;
+exportacionSegura.verificarAdmin = verificarAdmin;
+
+module.exports = exportacionSegura;

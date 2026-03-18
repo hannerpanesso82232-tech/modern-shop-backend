@@ -90,6 +90,26 @@ exports.eliminarCredito = async (req, res) => {
     }
 };
 
+// 🔥 LA FUNCIÓN DEL CANDADO (Esta es la que faltaba para la ruta /toggle-credito) 🔥
+exports.toggleCreditoUsuario = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const usuario = await Usuario.findByPk(id);
+        if (!usuario) return res.status(404).json({ error: "Usuario no encontrado" });
+
+        const nuevoEstado = usuario.credito_activo === false ? true : false;
+        await usuario.update({ credito_activo: nuevoEstado });
+
+        res.json({ 
+            mensaje: `Crédito ${nuevoEstado ? 'Activado (Desbloqueado)' : 'Suspendido (Bloqueado)'} para ${usuario.nombre}`, 
+            credito_activo: nuevoEstado 
+        });
+    } catch (error) { 
+        console.error("❌ Error al modificar crédito:", error);
+        res.status(500).json({ error: "Error al modificar el estado de crédito" }); 
+    }
+};
+
 // 5. 🔥 OBTENER MI CRÉDITO Y MI HISTORIAL DE PAGOS (CLIENTE) 🔥
 exports.obtenerMiCredito = async (req, res) => {
     try {
@@ -134,6 +154,7 @@ exports.obtenerMiCredito = async (req, res) => {
         res.json({
             limite_credito: parseFloat(usuario.limite_credito || 0),
             dias_credito: parseInt(usuario.dias_credito || 30),
+            credito_activo: usuario.credito_activo !== false, // 🔥 Enviamos el estado de la cerradura 🔥
             deuda_total: deudaTotal,
             historial_creditos: creditos,
             historial_pagos: historialPagos // 🔥 AQUÍ ENVIAMOS EL HISTORIAL 🔥
