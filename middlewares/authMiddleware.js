@@ -11,7 +11,7 @@ const verificarToken = (req, res, next) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded; // Guardamos los datos del usuario en la request
+        req.user = decoded; 
         next();
     } catch (error) {
         console.error("Error al verificar token:", error.message);
@@ -35,5 +35,10 @@ const verificarAdmin = (req, res, next) => {
     next();
 };
 
-// 🔥 Restauramos la exportación clásica en objeto 🔥
-module.exports = { verificarToken, permitirRoles, verificarAdmin };
+// 🔥 LA SOLUCIÓN DEFINITIVA A LOS CRASHEOS DE RENDER 🔥
+// Exportamos la función principal para que no se rompan las rutas viejas
+module.exports = verificarToken;
+// Y adjuntamos las propiedades para que las rutas nuevas (como la de créditos) funcionen perfecto
+module.exports.verificarToken = verificarToken;
+module.exports.permitirRoles = permitirRoles;
+module.exports.verificarAdmin = verificarAdmin;
