@@ -34,6 +34,11 @@ exports.crearCredito = async (req, res) => {
         const creditoCompleto = await Credito.findByPk(nuevoCredito.id, {
             include: [{ model: Usuario, as: 'Usuario', attributes: ['nombre', 'cedula', 'telefono'] }]
         });
+
+        // 🔥 ALERTAMOS AL CLIENTE QUE SE LE CREÓ DEUDA 🔥
+        const io = req.app.get('socketio') || req.io; 
+        if (io) io.emit('cartera_actualizada', { usuarioId: parseInt(usuarioId) });
+
         res.status(201).json(creditoCompleto);
     } catch (error) {
         console.error("❌ Error en crearCredito:", error);
@@ -67,6 +72,11 @@ exports.registrarAbono = async (req, res) => {
         }, { transaction: t });
 
         await t.commit();
+
+        // 🔥 ALERTAMOS AL CLIENTE DEL ABONO 🔥
+        const io = req.app.get('socketio') || req.io; 
+        if (io) io.emit('cartera_actualizada', { usuarioId: credito.usuarioId });
+
         res.json({ mensaje: "Abono registrado", saldo_restante: nuevoSaldo, estado: estadoFinal, abono: nuevoAbono });
     } catch (error) {
         await t.rollback();
@@ -83,6 +93,11 @@ exports.eliminarCredito = async (req, res) => {
         if (!credito) return res.status(404).json({ error: "Crédito no encontrado" });
         await Abono.destroy({ where: { creditoId: id } });
         await credito.destroy();
+
+        // 🔥 ALERTAMOS AL CLIENTE 🔥
+        const io = req.app.get('socketio') || req.io; 
+        if (io) io.emit('cartera_actualizada', { usuarioId: credito.usuarioId });
+
         res.json({ mensaje: "Crédito eliminado del sistema" });
     } catch (error) {
         console.error("❌ Error en eliminarCredito:", error);
@@ -90,7 +105,7 @@ exports.eliminarCredito = async (req, res) => {
     }
 };
 
-// 🔥 LA FUNCIÓN DEL CANDADO (Esta es la que faltaba para la ruta /toggle-credito) 🔥
+// 🔥 LA FUNCIÓN DEL CANDADO 🔥
 exports.toggleCreditoUsuario = async (req, res) => {
     try {
         const { id } = req.params;
@@ -99,6 +114,10 @@ exports.toggleCreditoUsuario = async (req, res) => {
 
         const nuevoEstado = usuario.credito_activo === false ? true : false;
         await usuario.update({ credito_activo: nuevoEstado });
+
+        // 🔥 ALERTAMOS AL CLIENTE QUE SE LE BLOQUEÓ O ACTIVÓ EL CRÉDITO 🔥
+        const io = req.app.get('socketio') || req.io; 
+        if (io) io.emit('cartera_actualizada', { usuarioId: usuario.id });
 
         res.json({ 
             mensaje: `Crédito ${nuevoEstado ? 'Activado (Desbloqueado)' : 'Suspendido (Bloqueado)'} para ${usuario.nombre}`, 
@@ -115,23 +134,19 @@ exports.obtenerMiCredito = async (req, res) => {
     try {
         const usuarioId = req.user.id;
 
-        // 1. Buscamos al usuario de forma segura
         const usuario = await Usuario.findByPk(usuarioId);
         if (!usuario) return res.status(404).json({ error: "Usuario no encontrado" });
 
-        // 2. Buscamos los créditos con sus abonos
         const creditos = await Credito.findAll({
             where: { usuarioId: usuarioId },
             include: [{ model: Abono, as: 'Abonos' }],
             order: [['createdAt', 'DESC']]
         });
 
-        // 3. Calculamos la deuda total
         const deudaTotal = creditos
             .filter(c => c.estado === 'VIGENTE')
             .reduce((suma, c) => suma + parseFloat(c.saldo || 0), 0);
 
-        // 4. 🔥 CREAMOS EL HISTORIAL GLOBAL DE PAGOS 🔥
         let historialPagos = [];
         creditos.forEach(cred => {
             if (cred.Abonos && cred.Abonos.length > 0) {
@@ -147,17 +162,15 @@ exports.obtenerMiCredito = async (req, res) => {
             }
         });
 
-        // Ordenamos los pagos del más reciente al más antiguo
         historialPagos.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
 
-        // 5. Devolvemos todo estructurado al Perfil del Frontend
         res.json({
             limite_credito: parseFloat(usuario.limite_credito || 0),
             dias_credito: parseInt(usuario.dias_credito || 30),
-            credito_activo: usuario.credito_activo !== false, // 🔥 Enviamos el estado de la cerradura 🔥
+            credito_activo: usuario.credito_activo !== false, 
             deuda_total: deudaTotal,
             historial_creditos: creditos,
-            historial_pagos: historialPagos // 🔥 AQUÍ ENVIAMOS EL HISTORIAL 🔥
+            historial_pagos: historialPagos 
         });
 
     } catch (error) {

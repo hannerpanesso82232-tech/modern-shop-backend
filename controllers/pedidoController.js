@@ -32,7 +32,6 @@ exports.crearPedido = async (req, res) => {
     const t = await sequelize.transaction();
     
     try {
-        // 🔥 RECIBIMOS EL METODO DE PAGO 🔥
         const { productos, direccion, metodo_pago } = req.body; 
         const usuarioId = req.user.id; 
 
@@ -53,7 +52,6 @@ exports.crearPedido = async (req, res) => {
         if (metodo_pago === 'CREDITO') {
             const limiteCredito = parseFloat(usuario.limite_credito || 0);
             
-            // 🔥 BARRERA ANTI-CRÉDITO SUSPENDIDO 🔥
             if (usuario.credito_activo === false) {
                 throw new Error("Tu cuenta tiene el crédito suspendido. Por favor comunícate con administración.");
             }
@@ -71,7 +69,6 @@ exports.crearPedido = async (req, res) => {
 
         const rutaAsignada = await asignarRutaLogistica(usuario?.ciudad, direccion);
 
-        // 🔥 GUARDAMOS EL METODO DE PAGO EN EL PEDIDO 🔥
         const nuevoPedido = await Pedido.create({
             usuarioId: usuarioId, 
             estado: 'Pendiente', 
@@ -79,7 +76,7 @@ exports.crearPedido = async (req, res) => {
             total: 0,
             direccion: direccion, 
             ruta: rutaAsignada,
-            metodo_pago: metodo_pago || 'CONTADO' // <-- Guardamos la variable
+            metodo_pago: metodo_pago || 'CONTADO' 
         }, { transaction: t });
 
         let totalAcumulado = 0;
@@ -122,6 +119,7 @@ exports.crearPedido = async (req, res) => {
 
         const io = req.app.get('socketio') || req.io; 
         if (io) {
+            // Notificamos al Admin
             io.emit('nuevo_pedido_admin', {
                 pedidoId: nuevoPedido.id,
                 cliente: req.user.nombre || 'Cliente',
@@ -129,9 +127,11 @@ exports.crearPedido = async (req, res) => {
                 direccion: direccion,
                 ruta: rutaAsignada,
                 items: detallesParaNotificacion,
-                metodo_pago: metodo_pago || 'CONTADO', 
+                metodo_pago: metodo_pago || 'CONTADO',
                 timestamp: new Date()
             });
+            // 🔥 Notificamos a las otras pantallas del cliente para que refresquen 🔥
+            io.emit('pedido_actualizado', { usuarioId: usuarioId });
         }
 
         res.status(201).json({ mensaje: "Pedido confirmado", pedidoId: nuevoPedido.id, total: totalAcumulado, ruta: rutaAsignada, metodo_pago: metodo_pago || 'CONTADO' });
@@ -170,14 +170,13 @@ exports.listarTodosLosPedidos = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Error interno al obtener pedidos." }); }
 };
 
-// 🔥 SUPER ACTUALIZACIÓN PARA EL ADMIN 🔥
+// 🔥 ACTUALIZAR ESTADO (ADMIN) 🔥
 exports.actualizarEstadoPedido = async (req, res) => {
     const t = await sequelize.transaction();
     try {
         const { id } = req.params;
         const { estado } = req.body;
         
-        // Requerimos los detalles para gestionar el stock correctamente
         const pedido = await Pedido.findByPk(id, { 
             include: [{ model: DetallePedido, as: 'Detalles' }],
             transaction: t 
@@ -188,7 +187,6 @@ exports.actualizarEstadoPedido = async (req, res) => {
             return res.status(404).json({ error: "Pedido no encontrado" });
         }
 
-        // 🔥 BLOQUEO DE SEGURIDAD: Si el cliente canceló, el admin no lo puede reactivar
         if (pedido.estado === 'Cancelado' && pedido.cancelado_por === 'CLIENTE') {
             await t.rollback();
             return res.status(403).json({ error: "El cliente canceló este pedido. No se puede reactivar ni alterar el stock." });
@@ -197,15 +195,12 @@ exports.actualizarEstadoPedido = async (req, res) => {
         const estadoFormateado = estado.charAt(0).toUpperCase() + estado.slice(1).toLowerCase();
         const estadoAnterior = pedido.estado;
 
-        // 🔥 GESTIÓN PERFECTA DEL STOCK 🔥
-        // 1. Si el admin cancela el pedido, devolvemos el stock al inventario
         if (estadoAnterior !== 'Cancelado' && estadoFormateado === 'Cancelado') {
             for (const item of pedido.Detalles) {
                 const producto = await Producto.findByPk(item.productoId, { transaction: t });
                 if (producto) await producto.update({ stock: producto.stock + item.cantidad }, { transaction: t });
             }
         } 
-        // 2. Si el admin reactiva el pedido (estaba cancelado y ahora es pendiente), descontamos stock
         else if (estadoAnterior === 'Cancelado' && estadoFormateado !== 'Cancelado') {
             for (const item of pedido.Detalles) {
                 const producto = await Producto.findByPk(item.productoId, { transaction: t });
@@ -216,12 +211,11 @@ exports.actualizarEstadoPedido = async (req, res) => {
             }
         }
 
-        // Dejamos huella de quién canceló
         let canceladoPor = pedido.cancelado_por;
         if (estadoFormateado === 'Cancelado' && estadoAnterior !== 'Cancelado') {
             canceladoPor = 'ADMIN';
         } else if (estadoFormateado !== 'Cancelado') {
-            canceladoPor = null; // Borrar huella si se reactiva
+            canceladoPor = null; 
         }
 
         await pedido.update({ estado: estadoFormateado, cancelado_por: canceladoPor }, { transaction: t });
@@ -236,11 +230,7 @@ exports.actualizarEstadoPedido = async (req, res) => {
 
             if (creditoExistente) {
                 await Transaccion.destroy({
-                    where: {
-                        descripcion: {
-                            [Op.like]: `%Crédito #${creditoExistente.id}%` 
-                        }
-                    },
+                    where: { descripcion: { [Op.like]: `%Crédito #${creditoExistente.id}%` } },
                     transaction: t
                 });
 
@@ -250,6 +240,14 @@ exports.actualizarEstadoPedido = async (req, res) => {
         }
 
         await t.commit();
+
+        // 🔥 AVISAMOS AL CLIENTE EN TIEMPO REAL 🔥
+        const io = req.app.get('socketio') || req.io; 
+        if (io) {
+            io.emit('pedido_actualizado', { usuarioId: pedido.usuarioId });
+            io.emit('cartera_actualizada', { usuarioId: pedido.usuarioId }); // Por si la deuda cambió
+        }
+
         res.json({ mensaje: `Estado actualizado a ${estadoFormateado}`, pedido });
     } catch (error) { 
         await t.rollback();
@@ -258,6 +256,7 @@ exports.actualizarEstadoPedido = async (req, res) => {
     }
 };
 
+// 🔥 REPROGRAMAR RUTA (ADMIN) 🔥
 exports.actualizarRutaPedido = async (req, res) => {
     try {
         const { id } = req.params;
@@ -266,6 +265,11 @@ exports.actualizarRutaPedido = async (req, res) => {
         if (!pedido) return res.status(404).json({ error: "Pedido no encontrado" });
 
         await pedido.update({ ruta: ruta });
+
+        // 🔥 AVISAMOS AL CLIENTE EN TIEMPO REAL 🔥
+        const io = req.app.get('socketio') || req.io; 
+        if (io) io.emit('pedido_actualizado', { usuarioId: pedido.usuarioId });
+
         res.json({ mensaje: `Ruta actualizada a ${ruta}`, pedido });
     } catch (error) { res.status(500).json({ error: error.message }); }
 };
@@ -296,6 +300,7 @@ exports.eliminarRutaLogistica = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Error al eliminar ruta" }); }
 };
 
+// 🔥 DEVOLUCIÓN DE PRODUCTO (ADMIN) 🔥
 exports.procesarDevolucion = async (req, res) => {
     const t = await sequelize.transaction();
     try {
@@ -340,6 +345,11 @@ exports.procesarDevolucion = async (req, res) => {
         }
 
         await t.commit();
+
+        // 🔥 AVISAMOS AL CLIENTE EN TIEMPO REAL 🔥
+        const io = req.app.get('socketio') || req.io; 
+        if (io) io.emit('pedido_actualizado', { usuarioId: pedido.usuarioId });
+
         res.json({ mensaje: "Devolución procesada con éxito" });
 
     } catch (error) {
@@ -348,7 +358,7 @@ exports.procesarDevolucion = async (req, res) => {
     }
 };
 
-// 🔥 ACTUALIZACIÓN: DEJAMOS HUELLA DE QUE EL CLIENTE FUE QUIEN CANCELÓ 🔥
+// 🔥 CANCELAR (CLIENTE) 🔥
 exports.cancelarPedidoCliente = async (req, res) => {
     const t = await sequelize.transaction();
     try {
@@ -371,7 +381,6 @@ exports.cancelarPedidoCliente = async (req, res) => {
             return res.status(400).json({ error: "Solo puedes cancelar pedidos que están Pendientes." });
         }
 
-        // 🔥 MARCAMOS QUE EL CLIENTE LO CANCELÓ 🔥
         await pedido.update({ estado: 'Cancelado', cancelado_por: 'CLIENTE' }, { transaction: t });
 
         if (pedido.Detalles && pedido.Detalles.length > 0) {
@@ -393,6 +402,14 @@ exports.cancelarPedidoCliente = async (req, res) => {
         }
 
         await t.commit();
+
+        // 🔥 AVISAMOS AL CLIENTE Y ADMIN EN TIEMPO REAL 🔥
+        const io = req.app.get('socketio') || req.io; 
+        if (io) {
+            io.emit('pedido_actualizado', { usuarioId: usuarioId });
+            io.emit('cartera_actualizada', { usuarioId: usuarioId });
+        }
+
         res.json({ mensaje: "Pedido cancelado correctamente y stock devuelto." });
 
     } catch (error) {
