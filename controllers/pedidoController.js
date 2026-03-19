@@ -53,6 +53,11 @@ exports.crearPedido = async (req, res) => {
         if (metodo_pago === 'CREDITO') {
             const limiteCredito = parseFloat(usuario.limite_credito || 0);
             
+            // 🔥 BARRERA ANTI-CRÉDITO SUSPENDIDO 🔥
+            if (usuario.credito_activo === false) {
+                throw new Error("Tu cuenta tiene el crédito suspendido. Por favor comunícate con administración.");
+            }
+            
             if (limiteCredito === 0) {
                  throw new Error("No tienes un cupo de crédito asignado. Selecciona Pago de Contado.");
             }
@@ -124,7 +129,7 @@ exports.crearPedido = async (req, res) => {
                 direccion: direccion,
                 ruta: rutaAsignada,
                 items: detallesParaNotificacion,
-                metodo_pago: metodo_pago || 'CONTADO', // Pasamos esto a la app
+                metodo_pago: metodo_pago || 'CONTADO', 
                 timestamp: new Date()
             });
         }
@@ -165,20 +170,61 @@ exports.listarTodosLosPedidos = async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Error interno al obtener pedidos." }); }
 };
 
+// 🔥 SUPER ACTUALIZACIÓN PARA EL ADMIN 🔥
 exports.actualizarEstadoPedido = async (req, res) => {
     const t = await sequelize.transaction();
     try {
         const { id } = req.params;
         const { estado } = req.body;
-        const pedido = await Pedido.findByPk(id, { transaction: t });
+        
+        // Requerimos los detalles para gestionar el stock correctamente
+        const pedido = await Pedido.findByPk(id, { 
+            include: [{ model: DetallePedido, as: 'Detalles' }],
+            transaction: t 
+        });
         
         if (!pedido) {
             await t.rollback();
             return res.status(404).json({ error: "Pedido no encontrado" });
         }
 
+        // 🔥 BLOQUEO DE SEGURIDAD: Si el cliente canceló, el admin no lo puede reactivar
+        if (pedido.estado === 'Cancelado' && pedido.cancelado_por === 'CLIENTE') {
+            await t.rollback();
+            return res.status(403).json({ error: "El cliente canceló este pedido. No se puede reactivar ni alterar el stock." });
+        }
+
         const estadoFormateado = estado.charAt(0).toUpperCase() + estado.slice(1).toLowerCase();
-        await pedido.update({ estado: estadoFormateado }, { transaction: t });
+        const estadoAnterior = pedido.estado;
+
+        // 🔥 GESTIÓN PERFECTA DEL STOCK 🔥
+        // 1. Si el admin cancela el pedido, devolvemos el stock al inventario
+        if (estadoAnterior !== 'Cancelado' && estadoFormateado === 'Cancelado') {
+            for (const item of pedido.Detalles) {
+                const producto = await Producto.findByPk(item.productoId, { transaction: t });
+                if (producto) await producto.update({ stock: producto.stock + item.cantidad }, { transaction: t });
+            }
+        } 
+        // 2. Si el admin reactiva el pedido (estaba cancelado y ahora es pendiente), descontamos stock
+        else if (estadoAnterior === 'Cancelado' && estadoFormateado !== 'Cancelado') {
+            for (const item of pedido.Detalles) {
+                const producto = await Producto.findByPk(item.productoId, { transaction: t });
+                if (producto && producto.stock < item.cantidad) {
+                    throw new Error(`Stock insuficiente para reactivar. Falta inventario de: ${producto.nombre}.`);
+                }
+                if (producto) await producto.update({ stock: producto.stock - item.cantidad }, { transaction: t });
+            }
+        }
+
+        // Dejamos huella de quién canceló
+        let canceladoPor = pedido.cancelado_por;
+        if (estadoFormateado === 'Cancelado' && estadoAnterior !== 'Cancelado') {
+            canceladoPor = 'ADMIN';
+        } else if (estadoFormateado !== 'Cancelado') {
+            canceladoPor = null; // Borrar huella si se reactiva
+        }
+
+        await pedido.update({ estado: estadoFormateado, cancelado_por: canceladoPor }, { transaction: t });
 
         if (estadoFormateado !== 'Entregado') {
             await Transaccion.destroy({ where: { pedidoId: pedido.id }, transaction: t });
@@ -208,7 +254,7 @@ exports.actualizarEstadoPedido = async (req, res) => {
     } catch (error) { 
         await t.rollback();
         console.error("Error al actualizar estado del pedido:", error);
-        res.status(500).json({ error: error.message }); 
+        res.status(500).json({ error: error.message || "Ocurrió un error al procesar." }); 
     }
 };
 
@@ -302,6 +348,7 @@ exports.procesarDevolucion = async (req, res) => {
     }
 };
 
+// 🔥 ACTUALIZACIÓN: DEJAMOS HUELLA DE QUE EL CLIENTE FUE QUIEN CANCELÓ 🔥
 exports.cancelarPedidoCliente = async (req, res) => {
     const t = await sequelize.transaction();
     try {
@@ -324,7 +371,8 @@ exports.cancelarPedidoCliente = async (req, res) => {
             return res.status(400).json({ error: "Solo puedes cancelar pedidos que están Pendientes." });
         }
 
-        await pedido.update({ estado: 'Cancelado' }, { transaction: t });
+        // 🔥 MARCAMOS QUE EL CLIENTE LO CANCELÓ 🔥
+        await pedido.update({ estado: 'Cancelado', cancelado_por: 'CLIENTE' }, { transaction: t });
 
         if (pedido.Detalles && pedido.Detalles.length > 0) {
             for (const item of pedido.Detalles) {

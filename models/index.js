@@ -14,7 +14,6 @@ const Usuario = sequelize.define('Usuario', {
     ciudad: { type: DataTypes.STRING(100), allowNull: true },
     limite_credito: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 }, 
     dias_credito: { type: DataTypes.INTEGER, defaultValue: 30 },
-    // 🔥 NUEVO CAMPO: INTERRUPTOR DE CRÉDITO 🔥
     credito_activo: { type: DataTypes.BOOLEAN, defaultValue: true } 
 }, { tableName: 'usuarios', timestamps: false });
 
@@ -52,7 +51,9 @@ const Pedido = sequelize.define('Pedido', {
     total: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 },
     direccion: { type: DataTypes.TEXT, allowNull: true },
     ruta: { type: DataTypes.STRING(100), allowNull: true },
-    metodo_pago: { type: DataTypes.STRING(50), defaultValue: 'CONTADO' }
+    metodo_pago: { type: DataTypes.STRING(50), defaultValue: 'CONTADO' },
+    // 🔥 NUEVO CAMPO: ¿QUIÉN CANCELÓ EL PEDIDO? 🔥
+    cancelado_por: { type: DataTypes.STRING(20), allowNull: true }
 }, { tableName: 'pedidos', timestamps: false }); 
 
 // --- 6. MODELO DETALLEPEDIDO ---
