@@ -31,13 +31,21 @@ exports.obtenerProductos = async (req, res) => {
 // 2. Crear Producto
 exports.crearProducto = async (req, res) => {
     try {
-        const { nombre, descripcion, precio, stock, categoriaId, proveedor, costo_compra, margen_ganancia } = req.body;
+        // 🔥 AÑADIDO: Ahora se recibe y guarda el tope_stock 🔥
+        const { nombre, descripcion, precio, stock, categoriaId, proveedor, costo_compra, margen_ganancia, tope_stock } = req.body;
         const imagen_url = req.file ? req.file.path : null; 
         
         const nuevoProducto = await Producto.create({
-            nombre, descripcion, precio: parseFloat(precio || 0), stock: parseInt(stock || 0), 
-            categoriaId: categoriaId || null, imagen_url, proveedor: proveedor || 'No especificado',
-            costo_compra: parseFloat(costo_compra || 0), margen_ganancia: parseFloat(margen_ganancia || 0)
+            nombre, 
+            descripcion, 
+            precio: parseFloat(precio || 0), 
+            stock: parseInt(stock || 0), 
+            tope_stock: parseInt(tope_stock || 10), // Guardamos el tope
+            categoriaId: categoriaId || null, 
+            imagen_url, 
+            proveedor: proveedor || 'No especificado',
+            costo_compra: parseFloat(costo_compra || 0), 
+            margen_ganancia: parseFloat(margen_ganancia || 0)
         });
 
         const productoConCategoria = await Producto.findByPk(nuevoProducto.id, {
@@ -57,20 +65,26 @@ exports.crearProducto = async (req, res) => {
 exports.actualizarProducto = async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre, precio, stock, categoriaId, descripcion, proveedor, costo_compra, margen_ganancia } = req.body;
+        // 🔥 AÑADIDO: tope_stock 🔥
+        const { nombre, precio, stock, categoriaId, descripcion, proveedor, costo_compra, margen_ganancia, tope_stock } = req.body;
         
         const producto = await Producto.findByPk(id);
         if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
 
+        // 🔥 CORRECCIÓN: Validación robusta para no perder precios y topes 🔥
         const datosActualizados = {
-            nombre, descripcion, precio: parseFloat(precio || 0), stock: parseInt(stock || 0), 
-            categoriaId: categoriaId || null, proveedor: proveedor || producto.proveedor,
+            nombre: nombre || producto.nombre, 
+            descripcion: descripcion !== undefined ? descripcion : producto.descripcion, 
+            precio: precio !== undefined ? parseFloat(precio) : producto.precio, 
+            stock: stock !== undefined ? parseInt(stock) : producto.stock, 
+            tope_stock: tope_stock !== undefined ? parseInt(tope_stock) : producto.tope_stock,
+            categoriaId: categoriaId || producto.categoriaId, 
+            proveedor: proveedor || producto.proveedor,
             costo_compra: costo_compra !== undefined ? parseFloat(costo_compra) : producto.costo_compra,
             margen_ganancia: margen_ganancia !== undefined ? parseFloat(margen_ganancia) : producto.margen_ganancia
         };
 
         if (req.file) {
-            
             datosActualizados.imagen_url = req.file.path;
         }
 
@@ -80,12 +94,15 @@ exports.actualizarProducto = async (req, res) => {
             include: [{ model: Categoria, as: 'Categoria', attributes: ['nombre'] }]
         });
 
+        // 🔥 Destruimos el caché para que el catálogo de clientes muestre el precio nuevo de inmediato
         await redisClient.del('catalogo_productos');
 
-        // 🔥 MAGIA: Notificar a todos los clientes del cambio en vivo 🔥
+        // 🔥 MAGIA: Notificar a todos los clientes y paneles del cambio en vivo 🔥
         const io = req.app.get('socketio') || req.io;
         if(io) {
             io.emit('productoActualizado', productoFinal);
+            // Esto asegura que la tabla del admin también cambie al instante
+            io.emit('stockActualizado', { id: parseInt(id), nuevoStock: productoFinal.stock });
         }
 
         res.json({ mensaje: "Producto actualizado con éxito", producto: productoFinal });
@@ -136,14 +153,10 @@ exports.eliminarProducto = async (req, res) => {
         if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
 
         if (producto.imagen_url) {
-            // Igual que arriba, comentamos el fs.unlinkSync local.
+            // El manejo de archivos locales está comentado temporalmente
             // const rutaImagen = path.join(__dirname, '../uploads', path.basename(producto.imagen_url)); 
             // if (fs.existsSync(rutaImagen)) fs.unlinkSync(rutaImagen);
         }
-        /*if (producto.imagen_url) {
-            const rutaImagen = path.join(__dirname, '../uploads', path.basename(producto.imagen_url)); 
-            if (fs.existsSync(rutaImagen)) fs.unlinkSync(rutaImagen);
-        }*/
 
         await producto.destroy();
         await redisClient.del('catalogo_productos');
