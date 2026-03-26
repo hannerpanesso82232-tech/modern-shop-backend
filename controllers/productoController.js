@@ -31,8 +31,13 @@ exports.obtenerProductos = async (req, res) => {
 // 2. Crear Producto
 exports.crearProducto = async (req, res) => {
     try {
-        // 🔥 AÑADIDO: Ahora se recibe y guarda el tope_stock 🔥
-        const { nombre, descripcion, precio, stock, categoriaId, proveedor, costo_compra, margen_ganancia, tope_stock } = req.body;
+        // 🔥 AÑADIDO: Campos para Punto de Venta (POS) 🔥
+        const { 
+            nombre, descripcion, precio, stock, categoriaId, proveedor, 
+            costo_compra, margen_ganancia, tope_stock,
+            precio_mayor, cantidad_mayor, codigo_barras
+        } = req.body;
+        
         const imagen_url = req.file ? req.file.path : null; 
         
         const nuevoProducto = await Producto.create({
@@ -40,12 +45,17 @@ exports.crearProducto = async (req, res) => {
             descripcion, 
             precio: parseFloat(precio || 0), 
             stock: parseInt(stock || 0), 
-            tope_stock: parseInt(tope_stock || 10), // Guardamos el tope
+            tope_stock: parseInt(tope_stock || 10),
             categoriaId: categoriaId || null, 
             imagen_url, 
             proveedor: proveedor || 'No especificado',
             costo_compra: parseFloat(costo_compra || 0), 
-            margen_ganancia: parseFloat(margen_ganancia || 0)
+            margen_ganancia: parseFloat(margen_ganancia || 0),
+            
+            // 🔥 Guardamos los nuevos datos del POS 🔥
+            precio_mayor: precio_mayor ? parseFloat(precio_mayor) : null,
+            cantidad_mayor: parseInt(cantidad_mayor || 0),
+            codigo_barras: codigo_barras ? JSON.stringify(codigo_barras) : null
         });
 
         const productoConCategoria = await Producto.findByPk(nuevoProducto.id, {
@@ -65,13 +75,15 @@ exports.crearProducto = async (req, res) => {
 exports.actualizarProducto = async (req, res) => {
     try {
         const { id } = req.params;
-        // 🔥 AÑADIDO: tope_stock 🔥
-        const { nombre, precio, stock, categoriaId, descripcion, proveedor, costo_compra, margen_ganancia, tope_stock } = req.body;
+        const { 
+            nombre, precio, stock, categoriaId, descripcion, proveedor, 
+            costo_compra, margen_ganancia, tope_stock,
+            precio_mayor, cantidad_mayor, codigo_barras // 🔥 Campos POS 🔥
+        } = req.body;
         
         const producto = await Producto.findByPk(id);
         if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
 
-        // 🔥 CORRECCIÓN: Validación robusta para no perder precios y topes 🔥
         const datosActualizados = {
             nombre: nombre || producto.nombre, 
             descripcion: descripcion !== undefined ? descripcion : producto.descripcion, 
@@ -81,7 +93,12 @@ exports.actualizarProducto = async (req, res) => {
             categoriaId: categoriaId || producto.categoriaId, 
             proveedor: proveedor || producto.proveedor,
             costo_compra: costo_compra !== undefined ? parseFloat(costo_compra) : producto.costo_compra,
-            margen_ganancia: margen_ganancia !== undefined ? parseFloat(margen_ganancia) : producto.margen_ganancia
+            margen_ganancia: margen_ganancia !== undefined ? parseFloat(margen_ganancia) : producto.margen_ganancia,
+            
+            // 🔥 Actualizamos campos POS 🔥
+            precio_mayor: precio_mayor !== undefined ? (precio_mayor ? parseFloat(precio_mayor) : null) : producto.precio_mayor,
+            cantidad_mayor: cantidad_mayor !== undefined ? parseInt(cantidad_mayor) : producto.cantidad_mayor,
+            codigo_barras: codigo_barras !== undefined ? (codigo_barras ? JSON.stringify(codigo_barras) : null) : producto.codigo_barras
         };
 
         if (req.file) {
@@ -94,14 +111,11 @@ exports.actualizarProducto = async (req, res) => {
             include: [{ model: Categoria, as: 'Categoria', attributes: ['nombre'] }]
         });
 
-        // 🔥 Destruimos el caché para que el catálogo de clientes muestre el precio nuevo de inmediato
         await redisClient.del('catalogo_productos');
 
-        // 🔥 MAGIA: Notificar a todos los clientes y paneles del cambio en vivo 🔥
         const io = req.app.get('socketio') || req.io;
         if(io) {
             io.emit('productoActualizado', productoFinal);
-            // Esto asegura que la tabla del admin también cambie al instante
             io.emit('stockActualizado', { id: parseInt(id), nuevoStock: productoFinal.stock });
         }
 
@@ -134,7 +148,6 @@ exports.actualizarStockManualmente = async (req, res) => {
         await producto.update({ stock: nuevoStock });
         await redisClient.del('catalogo_productos');
 
-        // Avisar al Dashboard que el stock cambió
         const io = req.app.get('socketio') || req.io;
         if(io) io.emit('stockActualizado', { id: parseInt(id), nuevoStock });
 
@@ -151,12 +164,6 @@ exports.eliminarProducto = async (req, res) => {
         const { id } = req.params;
         const producto = await Producto.findByPk(id);
         if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
-
-        if (producto.imagen_url) {
-            // El manejo de archivos locales está comentado temporalmente
-            // const rutaImagen = path.join(__dirname, '../uploads', path.basename(producto.imagen_url)); 
-            // if (fs.existsSync(rutaImagen)) fs.unlinkSync(rutaImagen);
-        }
 
         await producto.destroy();
         await redisClient.del('catalogo_productos');

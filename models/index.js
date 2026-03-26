@@ -26,14 +26,20 @@ const Categoria = sequelize.define('Categoria', {
 const Producto = sequelize.define('Productos', {
     nombre: { type: DataTypes.STRING(150), allowNull: false },
     descripcion: DataTypes.TEXT,
-    precio: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+    precio: { type: DataTypes.DECIMAL(10, 2), allowNull: false }, // Este será el Precio Detal
     costo_compra: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 }, 
     margen_ganancia: { type: DataTypes.INTEGER, defaultValue: 0 }, 
     stock: { type: DataTypes.INTEGER, defaultValue: 0 },
     tope_stock: { type: DataTypes.INTEGER, defaultValue: 10 }, 
     imagen_url: { type: DataTypes.STRING(255) },
     proveedor: { type: DataTypes.STRING(150), defaultValue: 'No especificado' },
-    categoriaId: { type: DataTypes.INTEGER, field: 'categoria_id', allowNull: true }
+    categoriaId: { type: DataTypes.INTEGER, field: 'categoria_id', allowNull: true },
+    
+    // 🔥 NUEVOS CAMPOS PARA PUNTO DE VENTA (POS) 🔥
+    precio_mayor: { type: DataTypes.DECIMAL(10, 2), allowNull: true }, // Precio con descuento
+    cantidad_mayor: { type: DataTypes.INTEGER, defaultValue: 0 }, // A partir de cuántas unidades aplica el descuento
+    // Guardaremos un JSON estructurado así: { "7701234567890": 1, "7701234567891": 10 }
+    codigo_barras: { type: DataTypes.TEXT, allowNull: true } 
 }, { tableName: 'productos', timestamps: false });
 
 // --- 4. MODELO DE FAVORITOS ---
@@ -52,7 +58,6 @@ const Pedido = sequelize.define('Pedido', {
     direccion: { type: DataTypes.TEXT, allowNull: true },
     ruta: { type: DataTypes.STRING(100), allowNull: true },
     metodo_pago: { type: DataTypes.STRING(50), defaultValue: 'CONTADO' },
-    // 🔥 NUEVO CAMPO: ¿QUIÉN CANCELÓ EL PEDIDO? 🔥
     cancelado_por: { type: DataTypes.STRING(20), allowNull: true }
 }, { tableName: 'pedidos', timestamps: false }); 
 
