@@ -1,14 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const pedidoController = require('../controllers/pedidoController');
-const { verificarToken, verificarAdmin } = require('../middlewares/authMiddleware');
+// 🔥 Importamos al nuevo guardián 🔥
+const { verificarToken, verificarAdmin, verificarAdminOCajero } = require('../middlewares/authMiddleware');
 
 router.post('/', verificarToken, pedidoController.crearPedido);
 router.get('/mis-pedidos', verificarToken, pedidoController.obtenerMisPedidos);
 router.put('/:id/cancelar', verificarToken, pedidoController.cancelarPedidoCliente);
 
-router.get('/admin/todos', verificarToken, verificarAdmin, pedidoController.listarTodosLosPedidos);
-router.put('/:id/estado', verificarToken, verificarAdmin, pedidoController.actualizarEstadoPedido);
+// 🔥 El cajero necesita cargar los pedidos al abrir el panel y actualizarlos a 'Entregado' 🔥
+router.get('/admin/todos', verificarToken, verificarAdminOCajero, pedidoController.listarTodosLosPedidos);
+router.put('/:id/estado', verificarToken, verificarAdminOCajero, pedidoController.actualizarEstadoPedido);
+
 router.put('/:id/ruta', verificarToken, verificarAdmin, pedidoController.actualizarRutaPedido);
 router.put('/:id/devolucion', verificarToken, verificarAdmin, pedidoController.procesarDevolucion);
 

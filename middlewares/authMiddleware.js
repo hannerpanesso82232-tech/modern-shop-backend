@@ -35,11 +35,19 @@ const verificarAdmin = (req, res, next) => {
     next();
 };
 
+// 🔥 NUEVO GUARDIÁN: DEJA PASAR TANTO AL DUEÑO COMO AL CAJERO 🔥
+const verificarAdminOCajero = (req, res, next) => {
+    if (!req.user || (req.user.rol !== 'ADMIN' && req.user.rol !== 'CAJERO')) {
+        return res.status(403).json({ error: "Acceso denegado. Permisos insuficientes." });
+    }
+    next();
+};
+
 // 🔥 EXPORTACIÓN INDESTRUCTIBLE 🔥
-// Permite que otras rutas de tu sistema lo usen como quieran sin romper el servidor
 const exportacionSegura = verificarToken;
 exportacionSegura.verificarToken = verificarToken;
 exportacionSegura.permitirRoles = permitirRoles;
 exportacionSegura.verificarAdmin = verificarAdmin;
+exportacionSegura.verificarAdminOCajero = verificarAdminOCajero;
 
 module.exports = exportacionSegura;
