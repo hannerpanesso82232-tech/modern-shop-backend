@@ -13,7 +13,7 @@ router.get('/admin/todos', verificarToken, verificarAdminOCajero, pedidoControll
 router.put('/:id/estado', verificarToken, verificarAdminOCajero, pedidoController.actualizarEstadoPedido);
 
 router.put('/:id/ruta', verificarToken, verificarAdmin, pedidoController.actualizarRutaPedido);
-router.put('/:id/devolucion', verificarToken, verificarAdmin, pedidoController.procesarDevolucion);
+router.put('/:id/devolucion', verificarToken, verificarAdminOCajero, pedidoController.procesarDevolucion);
 
 //RUTAS DE CONFIGURACIÓN LOGÍSTICA
 router.get('/config/rutas', verificarToken, pedidoController.obtenerRutasLogistica);

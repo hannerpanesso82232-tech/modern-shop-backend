@@ -159,7 +159,11 @@ exports.obtenerMisPedidos = async (req, res) => {
 
 exports.listarTodosLosPedidos = async (req, res) => {
     try {
+        // 🔥 DATA SCOPING: Si es Cajero, solo ve pedidos de mostrador 🔥
+        const filtroRol = req.user.rol === 'CAJERO' ? { metodo_pago: 'POS_LOCAL' } : {};
+
         const pedidos = await Pedido.findAll({
+            where: filtroRol, // Aplicamos el filtro de seguridad
             include: [
                 { model: Usuario, as: 'Usuario', attributes: ['nombre', 'email', 'ciudad', 'direccion'] },
                 { model: DetallePedido, as: 'Detalles', include: [{ model: Producto, as: 'Producto', attributes: ['nombre', 'descripcion', 'imagen_url', 'precio'] }] }
@@ -167,7 +171,9 @@ exports.listarTodosLosPedidos = async (req, res) => {
             order: [['fecha', 'DESC']]
         });
         res.json(pedidos);
-    } catch (error) { res.status(500).json({ error: "Error interno al obtener pedidos." }); }
+    } catch (error) { 
+        res.status(500).json({ error: "Error interno al obtener pedidos." }); 
+    }
 };
 
 // 🔥 ACTUALIZAR ESTADO (ADMIN) 🔥
