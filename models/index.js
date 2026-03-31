@@ -7,7 +7,7 @@ const Usuario = sequelize.define('Usuario', {
     cedula: { type: DataTypes.STRING(20), unique: true, allowNull: true }, 
     email: { type: DataTypes.STRING(150), allowNull: true },
     password_hash: { type: DataTypes.TEXT, allowNull: false },
-    rol: { type: DataTypes.ENUM('ADMIN', 'COMPRAS', 'CLIENTE'), defaultValue: 'CLIENTE' },
+    rol: { type: DataTypes.ENUM('ADMIN', 'COMPRAS', 'CLIENTE','CAJERO'), defaultValue: 'CLIENTE' },
     telefono: { type: DataTypes.STRING(20) },
     fechaNacimiento: { type: DataTypes.DATEONLY, field: 'fecha_nacimiento' },
     direccion: { type: DataTypes.TEXT, allowNull: true },
