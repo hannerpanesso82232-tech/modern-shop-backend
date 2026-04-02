@@ -324,6 +324,7 @@
     };
 
     // 🔥 DEVOLUCIÓN DE PRODUCTO (ADMIN) 🔥
+    // 🔥 DEVOLUCIÓN DE PRODUCTO (ADMIN) 🔥
     exports.procesarDevolucion = async (req, res) => {
         const t = await sequelize.transaction();
         try {
@@ -358,10 +359,23 @@
             await pedido.update({ total: nuevoTotal }, { transaction: t });
 
             if (pedido.estado === 'Entregado') {
+                // 🔥 SOLUCIÓN: Buscar cómo se pagó originalmente este pedido
+                const txOriginal = await Transaccion.findOne({
+                    where: { pedidoId: pedido.id, tipo: 'INGRESO' },
+                    transaction: t
+                });
+
+                // Determinamos de dónde sale el dinero del reembolso
+                let metodoReembolso = 'EFECTIVO'; // Por defecto sale de la caja física
+                if (txOriginal && txOriginal.descripcion && txOriginal.descripcion.toUpperCase().includes('TRANSFERENCIA')) {
+                    metodoReembolso = 'TRANSFERENCIA';
+                }
+
                 await Transaccion.create({
                     tipo: 'EGRESO',
                     monto: valorADescontar,
-                    descripcion: `Reembolso Cliente - Orden #${pedido.id}`,
+                    // 🔥 Inyectamos la palabra clave en la descripción para que el frontend lo detecte y reste
+                    descripcion: `Reembolso Cliente - Orden #${pedido.id} [${metodoReembolso}]`,
                     categoria: 'Devoluciones',
                     pedidoId: pedido.id
                 }, { transaction: t });
