@@ -1,4 +1,4 @@
-    const { Pedido, DetallePedido, Producto, Usuario, Transaccion, RutaLogistica, Configuracion, Credito, sequelize } = require('../models');
+const { Pedido, DetallePedido, Producto, Usuario, Transaccion, RutaLogistica, Configuracion, Credito, sequelize } = require('../models');
     const { Op } = require('sequelize');
 
     const asignarRutaLogistica = async (ciudadCliente, direccion) => {
@@ -47,7 +47,6 @@
                 if (!producto) throw new Error(`El producto no existe.`);
                 if (producto.stock < item.cantidad) throw new Error(`Stock insuficiente para ${producto.nombre}.`);
                 
-                // 🔥 CORRECCIÓN: Usar el precio que viene del frontend si existe
                 const precioUsar = item.precio !== undefined ? parseFloat(item.precio) : parseFloat(producto.precio);
                 totalAcumuladoEstimado += precioUsar * item.cantidad;
             }
@@ -76,7 +75,7 @@
                 usuarioId: usuarioId, 
                 estado: 'Pendiente', 
                 fecha: new Date(),
-                total: total_forzado !== undefined ? parseFloat(total_forzado) : totalAcumuladoEstimado, // 🔥 CORRECCIÓN: Acepta total forzado
+                total: total_forzado !== undefined ? parseFloat(total_forzado) : totalAcumuladoEstimado, 
                 direccion: direccion, 
                 ruta: rutaAsignada,
                 metodo_pago: metodo_pago || 'CONTADO' 
@@ -84,27 +83,30 @@
 
             let totalAcumuladoReal = 0;
             const detallesParaNotificacion = []; 
+            const cambiosDeStock = []; // 🔥 Guardaremos los cambios aquí para avisar a todos
 
             for (const item of productos) {
                 const prodId = item.producto_id || item.id;
                 const producto = await Producto.findByPk(prodId);
                 
-                // 🔥 CORRECCIÓN: Volvemos a leer el precio del frontend para guardarlo
                 const precioGuardar = item.precio !== undefined ? parseFloat(item.precio) : parseFloat(producto.precio);
 
                 await DetallePedido.create({
                     pedidoId: nuevoPedido.id,
                     productoId: prodId,
                     cantidad: item.cantidad,
-                    precioUnitario: precioGuardar // 🔥 Ahora guarda el precio con descuento (ej: 500,000)
+                    precioUnitario: precioGuardar 
                 }, { transaction: t });
 
-                await producto.update({ stock: producto.stock - item.cantidad }, { transaction: t });
+                // 🔥 Calculamos y guardamos el nuevo stock 🔥
+                const nuevoStock = producto.stock - item.cantidad;
+                await producto.update({ stock: nuevoStock }, { transaction: t });
+                cambiosDeStock.push({ id: producto.id, nuevoStock: nuevoStock });
+                
                 totalAcumuladoReal += precioGuardar * item.cantidad;
                 detallesParaNotificacion.push({ nombre: producto.nombre, cantidad: item.cantidad });
             }
 
-            // Actualizamos el total del pedido si no enviaron total forzado
             if (total_forzado === undefined) {
                await nuevoPedido.update({ total: totalAcumuladoReal }, { transaction: t });
             }
@@ -130,7 +132,6 @@
 
             const io = req.app.get('socketio') || req.io; 
             if (io) {
-                // Notificamos al Admin
                 io.emit('nuevo_pedido_admin', {
                     pedidoId: nuevoPedido.id,
                     cliente: req.user.nombre || 'Cliente',
@@ -141,7 +142,12 @@
                     metodo_pago: metodo_pago || 'CONTADO',
                     timestamp: new Date()
                 });
-                // 🔥 Notificamos a las otras pantallas del cliente para que refresquen 🔥
+                
+                // 🔥 EL GOLPE MAESTRO A REDIS: Avisamos a TODOS los frontends el stock exacto 🔥
+                cambiosDeStock.forEach(cambio => {
+                    io.emit('stockActualizado', cambio);
+                });
+                
                 io.emit('pedido_actualizado', { usuarioId: usuarioId });
             }
 
@@ -176,11 +182,10 @@
 
     exports.listarTodosLosPedidos = async (req, res) => {
         try {
-            // 🔥 DATA SCOPING: Si es Cajero, solo ve pedidos de mostrador 🔥
             const filtroRol = req.user.rol === 'CAJERO' ? { metodo_pago: 'POS_LOCAL' } : {};
 
             const pedidos = await Pedido.findAll({
-                where: filtroRol, // Aplicamos el filtro de seguridad
+                where: filtroRol, 
                 include: [
                     { model: Usuario, as: 'Usuario', attributes: ['nombre', 'email', 'ciudad', 'direccion'] },
                     { model: DetallePedido, as: 'Detalles', include: [{ model: Producto, as: 'Producto', attributes: ['nombre', 'descripcion', 'imagen_url', 'precio'] }] }
@@ -193,7 +198,6 @@
         }
     };
 
-    // 🔥 ACTUALIZAR ESTADO (ADMIN) 🔥
     exports.actualizarEstadoPedido = async (req, res) => {
         const t = await sequelize.transaction();
         try {
@@ -217,11 +221,16 @@
 
             const estadoFormateado = estado.charAt(0).toUpperCase() + estado.slice(1).toLowerCase();
             const estadoAnterior = pedido.estado;
+            const cambiosDeStock = []; // 🔥 Registro de cambios para notificar
 
             if (estadoAnterior !== 'Cancelado' && estadoFormateado === 'Cancelado') {
                 for (const item of pedido.Detalles) {
                     const producto = await Producto.findByPk(item.productoId, { transaction: t });
-                    if (producto) await producto.update({ stock: producto.stock + item.cantidad }, { transaction: t });
+                    if (producto) {
+                        const nuevoStock = producto.stock + item.cantidad;
+                        await producto.update({ stock: nuevoStock }, { transaction: t });
+                        cambiosDeStock.push({ id: producto.id, nuevoStock: nuevoStock });
+                    }
                 }
             } 
             else if (estadoAnterior === 'Cancelado' && estadoFormateado !== 'Cancelado') {
@@ -230,7 +239,11 @@
                     if (producto && producto.stock < item.cantidad) {
                         throw new Error(`Stock insuficiente para reactivar. Falta inventario de: ${producto.nombre}.`);
                     }
-                    if (producto) await producto.update({ stock: producto.stock - item.cantidad }, { transaction: t });
+                    if (producto) {
+                        const nuevoStock = producto.stock - item.cantidad;
+                        await producto.update({ stock: nuevoStock }, { transaction: t });
+                        cambiosDeStock.push({ id: producto.id, nuevoStock: nuevoStock });
+                    }
                 }
             }
 
@@ -264,11 +277,12 @@
 
             await t.commit();
 
-            // 🔥 AVISAMOS AL CLIENTE EN TIEMPO REAL 🔥
             const io = req.app.get('socketio') || req.io; 
             if (io) {
                 io.emit('pedido_actualizado', { usuarioId: pedido.usuarioId });
-                io.emit('cartera_actualizada', { usuarioId: pedido.usuarioId }); // Por si la deuda cambió
+                io.emit('cartera_actualizada', { usuarioId: pedido.usuarioId });
+                // 🔥 Notificamos cambios de stock si hubo cancelaciones/reactivaciones
+                cambiosDeStock.forEach(cambio => io.emit('stockActualizado', cambio));
             }
 
             res.json({ mensaje: `Estado actualizado a ${estadoFormateado}`, pedido });
@@ -279,7 +293,6 @@
         }
     };
 
-    // 🔥 REPROGRAMAR RUTA (ADMIN) 🔥
     exports.actualizarRutaPedido = async (req, res) => {
         try {
             const { id } = req.params;
@@ -289,7 +302,6 @@
 
             await pedido.update({ ruta: ruta });
 
-            // 🔥 AVISAMOS AL CLIENTE EN TIEMPO REAL 🔥
             const io = req.app.get('socketio') || req.io; 
             if (io) io.emit('pedido_actualizado', { usuarioId: pedido.usuarioId });
 
@@ -324,7 +336,6 @@
     };
 
     // 🔥 DEVOLUCIÓN DE PRODUCTO (ADMIN) 🔥
-    // 🔥 DEVOLUCIÓN DE PRODUCTO (ADMIN) 🔥
     exports.procesarDevolucion = async (req, res) => {
         const t = await sequelize.transaction();
         try {
@@ -343,8 +354,10 @@
             if (cantidadDevuelta > detalle.cantidad) throw new Error("No puedes devolver más de lo que se compró");
 
             const producto = await Producto.findByPk(productoId, { transaction: t });
+            let nuevoStockProd = 0;
             if (producto) {
-                await producto.update({ stock: producto.stock + cantidadDevuelta }, { transaction: t });
+                nuevoStockProd = producto.stock + cantidadDevuelta;
+                await producto.update({ stock: nuevoStockProd }, { transaction: t });
             }
 
             const nuevaCantidad = detalle.cantidad - cantidadDevuelta;
@@ -359,14 +372,12 @@
             await pedido.update({ total: nuevoTotal }, { transaction: t });
 
             if (pedido.estado === 'Entregado') {
-                // 🔥 SOLUCIÓN: Buscar cómo se pagó originalmente este pedido
                 const txOriginal = await Transaccion.findOne({
                     where: { pedidoId: pedido.id, tipo: 'INGRESO' },
                     transaction: t
                 });
 
-                // Determinamos de dónde sale el dinero del reembolso
-                let metodoReembolso = 'EFECTIVO'; // Por defecto sale de la caja física
+                let metodoReembolso = 'EFECTIVO'; 
                 if (txOriginal && txOriginal.descripcion && txOriginal.descripcion.toUpperCase().includes('TRANSFERENCIA')) {
                     metodoReembolso = 'TRANSFERENCIA';
                 }
@@ -374,7 +385,6 @@
                 await Transaccion.create({
                     tipo: 'EGRESO',
                     monto: valorADescontar,
-                    // 🔥 Inyectamos la palabra clave en la descripción para que el frontend lo detecte y reste
                     descripcion: `Reembolso Cliente - Orden #${pedido.id} [${metodoReembolso}]`,
                     categoria: 'Devoluciones',
                     pedidoId: pedido.id
@@ -383,9 +393,14 @@
 
             await t.commit();
 
-            // 🔥 AVISAMOS AL CLIENTE EN TIEMPO REAL 🔥
             const io = req.app.get('socketio') || req.io; 
-            if (io) io.emit('pedido_actualizado', { usuarioId: pedido.usuarioId });
+            if (io) {
+                io.emit('pedido_actualizado', { usuarioId: pedido.usuarioId });
+                // 🔥 Notificamos que el producto volvió al inventario
+                if (producto) {
+                    io.emit('stockActualizado', { id: producto.id, nuevoStock: nuevoStockProd });
+                }
+            }
 
             res.json({ mensaje: "Devolución procesada con éxito" });
 
@@ -420,11 +435,14 @@
 
             await pedido.update({ estado: 'Cancelado', cancelado_por: 'CLIENTE' }, { transaction: t });
 
+            const cambiosDeStock = []; // 🔥 Registro de cambios para notificar
             if (pedido.Detalles && pedido.Detalles.length > 0) {
                 for (const item of pedido.Detalles) {
                     const producto = await Producto.findByPk(item.productoId, { transaction: t });
                     if (producto) {
-                        await producto.update({ stock: producto.stock + item.cantidad }, { transaction: t });
+                        const nuevoStock = producto.stock + item.cantidad;
+                        await producto.update({ stock: nuevoStock }, { transaction: t });
+                        cambiosDeStock.push({ id: producto.id, nuevoStock: nuevoStock });
                     }
                 }
             }
@@ -440,11 +458,12 @@
 
             await t.commit();
 
-            // 🔥 AVISAMOS AL CLIENTE Y ADMIN EN TIEMPO REAL 🔥
             const io = req.app.get('socketio') || req.io; 
             if (io) {
                 io.emit('pedido_actualizado', { usuarioId: usuarioId });
                 io.emit('cartera_actualizada', { usuarioId: usuarioId });
+                // 🔥 Notificamos que el stock fue devuelto a la bodega
+                cambiosDeStock.forEach(cambio => io.emit('stockActualizado', cambio));
             }
 
             res.json({ mensaje: "Pedido cancelado correctamente y stock devuelto." });
