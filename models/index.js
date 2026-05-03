@@ -26,7 +26,7 @@ const Categoria = sequelize.define('Categoria', {
 const Producto = sequelize.define('Productos', {
     nombre: { type: DataTypes.STRING(150), allowNull: false },
     descripcion: DataTypes.TEXT,
-    precio: { type: DataTypes.DECIMAL(10, 2), allowNull: false }, // Este será el Precio Detal
+    precio: { type: DataTypes.DECIMAL(10, 2), allowNull: false }, 
     costo_compra: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 }, 
     margen_ganancia: { type: DataTypes.INTEGER, defaultValue: 0 }, 
     stock: { type: DataTypes.INTEGER, defaultValue: 0 },
@@ -35,10 +35,9 @@ const Producto = sequelize.define('Productos', {
     proveedor: { type: DataTypes.STRING(150), defaultValue: 'No especificado' },
     categoriaId: { type: DataTypes.INTEGER, field: 'categoria_id', allowNull: true },
     
-    // 🔥 NUEVOS CAMPOS PARA PUNTO DE VENTA (POS) 🔥
-    precio_mayor: { type: DataTypes.DECIMAL(10, 2), allowNull: true }, // Precio con descuento
-    cantidad_mayor: { type: DataTypes.INTEGER, defaultValue: 0 }, // A partir de cuántas unidades aplica el descuento
-    // Guardaremos un JSON estructurado así: { "7701234567890": 1, "7701234567891": 10 }
+    // CAMPOS PARA POS
+    precio_mayor: { type: DataTypes.DECIMAL(10, 2), allowNull: true }, 
+    cantidad_mayor: { type: DataTypes.INTEGER, defaultValue: 0 }, 
     codigo_barras: { type: DataTypes.TEXT, allowNull: true } 
 }, { tableName: 'productos', timestamps: false });
 
@@ -123,7 +122,7 @@ const Abono = sequelize.define('Abono', {
     fecha: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
 }, { tableName: 'abonos', timestamps: true });
 
-// --- 13. MODELO: PROVEEDORES (NUEVO) 🔥 ---
+// --- 13. MODELO: PROVEEDORES ---
 const Proveedor = sequelize.define('Proveedor', {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     nombre: { type: DataTypes.STRING(150), allowNull: false, unique: true },
@@ -132,6 +131,24 @@ const Proveedor = sequelize.define('Proveedor', {
     email: { type: DataTypes.STRING(150), allowNull: true },
     direccion: { type: DataTypes.TEXT, allowNull: true }
 }, { tableName: 'proveedores', timestamps: true });
+
+// --- 14. MODELO: SESIONES DE CAJA (NUEVO) 🔥 ---
+const SesionCaja = sequelize.define('SesionCaja', {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    usuarioId: { type: DataTypes.INTEGER, allowNull: false, field: 'usuario_id' }, // El Cajero
+    fecha_apertura: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+    fecha_cierre: { type: DataTypes.DATE, allowNull: true },
+    saldo_inicial: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 },
+    ingresos_efectivo: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 },
+    ingresos_transferencia: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 },
+    egresos_efectivo: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 },
+    efectivo_esperado: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 }, // Lo que calculó el sistema
+    efectivo_declarado: { type: DataTypes.DECIMAL(12, 2), allowNull: true }, // Lo que contó el cajero físico
+    descuadre: { type: DataTypes.DECIMAL(12, 2), allowNull: true }, // Diferencia (Sobrante o Faltante)
+    observaciones: { type: DataTypes.TEXT, allowNull: true },
+    estado: { type: DataTypes.ENUM('ABIERTA', 'CERRADA'), defaultValue: 'ABIERTA' }
+}, { tableName: 'sesiones_caja', timestamps: true });
+
 
 // --- RELACIONES ---
 Usuario.hasMany(Direccion, { foreignKey: 'usuarioId', as: 'Direcciones' });
@@ -164,9 +181,12 @@ Credito.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
 Credito.hasMany(Abono, { foreignKey: 'creditoId', as: 'Abonos' });
 Abono.belongsTo(Credito, { foreignKey: 'creditoId', as: 'Credito' });
 
-// 🔥 EXPORTAMOS TODOS LOS MODELOS (Incluyendo Proveedor) 🔥
+// Relaciones para Sesión de Caja
+Usuario.hasMany(SesionCaja, { foreignKey: 'usuarioId', as: 'SesionesCaja' });
+SesionCaja.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Cajero' });
+
 module.exports = { 
     sequelize, Usuario, Producto, Pedido, DetallePedido, 
     Categoria, Favorito, Direccion, Configuracion, Transaccion, 
-    RutaLogistica, Credito, Abono, Proveedor
+    RutaLogistica, Credito, Abono, Proveedor, SesionCaja
 };
