@@ -123,6 +123,16 @@ const Abono = sequelize.define('Abono', {
     fecha: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
 }, { tableName: 'abonos', timestamps: true });
 
+// --- 13. MODELO: PROVEEDORES (NUEVO) 🔥 ---
+const Proveedor = sequelize.define('Proveedor', {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    nombre: { type: DataTypes.STRING(150), allowNull: false, unique: true },
+    contacto: { type: DataTypes.STRING(150), allowNull: true },
+    telefono: { type: DataTypes.STRING(50), allowNull: true },
+    email: { type: DataTypes.STRING(150), allowNull: true },
+    direccion: { type: DataTypes.TEXT, allowNull: true }
+}, { tableName: 'proveedores', timestamps: true });
+
 // --- RELACIONES ---
 Usuario.hasMany(Direccion, { foreignKey: 'usuarioId', as: 'Direcciones' });
 Direccion.belongsTo(Usuario, { foreignKey: 'usuarioId' });
@@ -154,8 +164,9 @@ Credito.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
 Credito.hasMany(Abono, { foreignKey: 'creditoId', as: 'Abonos' });
 Abono.belongsTo(Credito, { foreignKey: 'creditoId', as: 'Credito' });
 
+// 🔥 EXPORTAMOS TODOS LOS MODELOS (Incluyendo Proveedor) 🔥
 module.exports = { 
     sequelize, Usuario, Producto, Pedido, DetallePedido, 
     Categoria, Favorito, Direccion, Configuracion, Transaccion, 
-    RutaLogistica, Credito, Abono
+    RutaLogistica, Credito, Abono, Proveedor
 };
