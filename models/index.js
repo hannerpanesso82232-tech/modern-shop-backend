@@ -14,7 +14,8 @@ const Usuario = sequelize.define('Usuario', {
     ciudad: { type: DataTypes.STRING(100), allowNull: true },
     limite_credito: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 }, 
     dias_credito: { type: DataTypes.INTEGER, defaultValue: 30 },
-    credito_activo: { type: DataTypes.BOOLEAN, defaultValue: true } 
+    credito_activo: { type: DataTypes.BOOLEAN, defaultValue: true },
+    sucursalId: { type: DataTypes.INTEGER, allowNull: true } // 🔥 NUEVO: Para saber a qué sucursal pertenece un Cajero
 }, { tableName: 'usuarios', timestamps: false });
 
 // --- 2. MODELO DE CATEGORÍAS ---
@@ -22,20 +23,18 @@ const Categoria = sequelize.define('Categoria', {
     nombre: { type: DataTypes.STRING(50), allowNull: false, unique: true }
 }, { tableName: 'categorias', timestamps: false });
 
-// --- 3. MODELO DE PRODUCTOS ---
+// --- 3. MODELO DE PRODUCTOS (Este será el inventario GLOBAL/Central) ---
 const Producto = sequelize.define('Productos', {
     nombre: { type: DataTypes.STRING(150), allowNull: false },
     descripcion: DataTypes.TEXT,
     precio: { type: DataTypes.DECIMAL(10, 2), allowNull: false }, 
     costo_compra: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 }, 
     margen_ganancia: { type: DataTypes.INTEGER, defaultValue: 0 }, 
-    stock: { type: DataTypes.INTEGER, defaultValue: 0 },
+    stock: { type: DataTypes.INTEGER, defaultValue: 0 }, // Stock Total de la empresa
     tope_stock: { type: DataTypes.INTEGER, defaultValue: 10 }, 
     imagen_url: { type: DataTypes.STRING(255) },
     proveedor: { type: DataTypes.STRING(150), defaultValue: 'No especificado' },
     categoriaId: { type: DataTypes.INTEGER, field: 'categoria_id', allowNull: true },
-    
-    // CAMPOS PARA POS
     precio_mayor: { type: DataTypes.DECIMAL(10, 2), allowNull: true }, 
     cantidad_mayor: { type: DataTypes.INTEGER, defaultValue: 0 }, 
     codigo_barras: { type: DataTypes.TEXT, allowNull: true } 
@@ -192,54 +191,69 @@ const Asistencia = sequelize.define('Asistencia', {
     novedad: { type: DataTypes.STRING(255), allowNull: true } // Ej: "Llegó tarde", "Falta injustificada"
 }, { tableName: 'asistencias', timestamps: true });
 
+// 🔥 18. MODELO: SUCURSALES (TIENDAS) 🔥
+const Sucursal = sequelize.define('Sucursal', {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    nombre: { type: DataTypes.STRING(100), allowNull: false, unique: true },
+    direccion: { type: DataTypes.STRING(255), allowNull: true },
+    ciudad: { type: DataTypes.STRING(100), allowNull: true },
+    telefono: { type: DataTypes.STRING(50), allowNull: true },
+    es_principal: { type: DataTypes.BOOLEAN, defaultValue: false } // Para identificar la Bodega Central
+}, { tableName: 'sucursales', timestamps: true });
 
-// --- RELACIONES ---
-Usuario.hasMany(Direccion, { foreignKey: 'usuarioId', as: 'Direcciones' });
-Direccion.belongsTo(Usuario, { foreignKey: 'usuarioId' });
+// 🔥 19. MODELO: INVENTARIO POR SUCURSAL (NODO) 🔥
+const InventarioSucursal = sequelize.define('InventarioSucursal', {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    productoId: { type: DataTypes.INTEGER, allowNull: false, field: 'producto_id' },
+    sucursalId: { type: DataTypes.INTEGER, allowNull: false, field: 'sucursal_id' },
+    stock_local: { type: DataTypes.INTEGER, defaultValue: 0 }, // El stock específico de esta tienda
+    tope_minimo_local: { type: DataTypes.INTEGER, defaultValue: 5 }
+}, { 
+    tableName: 'inventarios_sucursales', 
+    timestamps: true,
+    indexes: [ { unique: true, fields: ['producto_id', 'sucursal_id'] } ] // Un producto solo puede tener 1 registro por sucursal
+});
 
-Categoria.hasMany(Producto, { foreignKey: 'categoriaId', as: 'Productos' });
-Producto.belongsTo(Categoria, { foreignKey: 'categoriaId', as: 'Categoria' });
 
-Usuario.belongsToMany(Producto, { through: Favorito, foreignKey: 'usuario_id' });
-Producto.belongsToMany(Usuario, { through: Favorito, foreignKey: 'producto_id' });
-Favorito.belongsTo(Usuario, { foreignKey: 'usuario_id' });
-Favorito.belongsTo(Producto, { foreignKey: 'producto_id', as: 'Producto' });
-Producto.hasMany(Favorito, { foreignKey: 'producto_id' });
+// --- RELACIONES ACTUALIZADAS ---
+Usuario.hasMany(Direccion, { foreignKey: 'usuarioId', as: 'Direcciones' }); Direccion.belongsTo(Usuario, { foreignKey: 'usuarioId' });
+Categoria.hasMany(Producto, { foreignKey: 'categoriaId', as: 'Productos' }); Producto.belongsTo(Categoria, { foreignKey: 'categoriaId', as: 'Categoria' });
+Usuario.belongsToMany(Producto, { through: Favorito, foreignKey: 'usuario_id' }); Producto.belongsToMany(Usuario, { through: Favorito, foreignKey: 'producto_id' });
+Favorito.belongsTo(Usuario, { foreignKey: 'usuario_id' }); Favorito.belongsTo(Producto, { foreignKey: 'producto_id', as: 'Producto' }); Producto.hasMany(Favorito, { foreignKey: 'producto_id' });
+Usuario.hasMany(Pedido, { foreignKey: 'usuarioId', as: 'Pedidos' }); Pedido.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
+Pedido.hasMany(DetallePedido, { foreignKey: 'pedidoId', as: 'Detalles' }); DetallePedido.belongsTo(Pedido, { foreignKey: 'pedidoId' });
+Producto.hasMany(DetallePedido, { foreignKey: 'productoId' }); DetallePedido.belongsTo(Producto, { foreignKey: 'productoId', as: 'Producto' });
+Pedido.hasOne(Transaccion, { foreignKey: 'pedidoId', as: 'TransaccionContable' }); Transaccion.belongsTo(Pedido, { foreignKey: 'pedidoId' });
+Usuario.hasMany(Credito, { foreignKey: 'usuarioId', as: 'Creditos' }); Credito.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
+Credito.hasMany(Abono, { foreignKey: 'creditoId', as: 'Abonos' }); Abono.belongsTo(Credito, { foreignKey: 'creditoId', as: 'Credito' });
+Usuario.hasMany(SesionCaja, { foreignKey: 'usuarioId', as: 'SesionesCaja' }); SesionCaja.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Cajero' });
+Producto.hasMany(MovimientoKardex, { foreignKey: 'productoId', as: 'HistorialKardex' }); MovimientoKardex.belongsTo(Producto, { foreignKey: 'productoId', as: 'Producto' });
+Usuario.hasMany(MovimientoKardex, { foreignKey: 'usuarioId', as: 'MovimientosRealizados' }); MovimientoKardex.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
+Empleado.hasMany(Asistencia, { foreignKey: 'empleadoId', as: 'Asistencias' }); Asistencia.belongsTo(Empleado, { foreignKey: 'empleadoId', as: 'Empleado' });
 
-Usuario.hasMany(Pedido, { foreignKey: 'usuarioId', as: 'Pedidos' });
-Pedido.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
+// 🔥 RELACIONES OMNICANAL / MULTISUCURSAL 🔥
+Sucursal.hasMany(InventarioSucursal, { foreignKey: 'sucursalId', as: 'Inventarios' });
+InventarioSucursal.belongsTo(Sucursal, { foreignKey: 'sucursalId', as: 'Sucursal' });
 
-Pedido.hasMany(DetallePedido, { foreignKey: 'pedidoId', as: 'Detalles' });
-DetallePedido.belongsTo(Pedido, { foreignKey: 'pedidoId' });
+Producto.hasMany(InventarioSucursal, { foreignKey: 'productoId', as: 'StockPorSucursal' });
+InventarioSucursal.belongsTo(Producto, { foreignKey: 'productoId', as: 'Producto' });
 
-Producto.hasMany(DetallePedido, { foreignKey: 'productoId' });
-DetallePedido.belongsTo(Producto, { foreignKey: 'productoId', as: 'Producto' });
+Sucursal.hasMany(Usuario, { foreignKey: 'sucursalId', as: 'Empleados' });
+Usuario.belongsTo(Sucursal, { foreignKey: 'sucursalId', as: 'SucursalAsignada' });
 
-Pedido.hasOne(Transaccion, { foreignKey: 'pedidoId', as: 'TransaccionContable' });
-Transaccion.belongsTo(Pedido, { foreignKey: 'pedidoId' });
+Sucursal.hasMany(Pedido, { foreignKey: 'sucursalId', as: 'VentasLocales' });
+Pedido.belongsTo(Sucursal, { foreignKey: 'sucursalId', as: 'SucursalOrigen' });
 
-Usuario.hasMany(Credito, { foreignKey: 'usuarioId', as: 'Creditos' });
-Credito.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
+Sucursal.hasMany(Transaccion, { foreignKey: 'sucursalId', as: 'TransaccionesCaja' });
+Transaccion.belongsTo(Sucursal, { foreignKey: 'sucursalId', as: 'Sucursal' });
 
-Credito.hasMany(Abono, { foreignKey: 'creditoId', as: 'Abonos' });
-Abono.belongsTo(Credito, { foreignKey: 'creditoId', as: 'Credito' });
-
-Usuario.hasMany(SesionCaja, { foreignKey: 'usuarioId', as: 'SesionesCaja' });
-SesionCaja.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Cajero' });
-
-// 🔥 NUEVAS RELACIONES (Kardex y RRHH) 🔥
-Producto.hasMany(MovimientoKardex, { foreignKey: 'productoId', as: 'HistorialKardex' });
-MovimientoKardex.belongsTo(Producto, { foreignKey: 'productoId', as: 'Producto' });
-
-Usuario.hasMany(MovimientoKardex, { foreignKey: 'usuarioId', as: 'MovimientosRealizados' });
-MovimientoKardex.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
-
-Empleado.hasMany(Asistencia, { foreignKey: 'empleadoId', as: 'Asistencias' });
-Asistencia.belongsTo(Empleado, { foreignKey: 'empleadoId', as: 'Empleado' });
+Sucursal.hasMany(SesionCaja, { foreignKey: 'sucursalId', as: 'TurnosCaja' });
+SesionCaja.belongsTo(Sucursal, { foreignKey: 'sucursalId', as: 'Sucursal' });
 
 module.exports = { 
     sequelize, Usuario, Producto, Pedido, DetallePedido, 
     Categoria, Favorito, Direccion, Configuracion, Transaccion, 
     RutaLogistica, Credito, Abono, Proveedor, SesionCaja,
-    MovimientoKardex, Empleado, Asistencia // 🔥 Añadimos los modelos exportados
+    MovimientoKardex, Empleado, Asistencia,
+    Sucursal, InventarioSucursal // 🔥 Exportamos la arquitectura Multialmacén
 };
