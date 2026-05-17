@@ -60,6 +60,7 @@ app.use('/caja', require('./routes/cajaRoutes'));
 app.use('/kardex', require('./routes/kardexRoutes'));
 app.use('/rrhh', require('./routes/rrhhRoutes'));
 app.use('/reportes-bi', require('./routes/reportesRoutes'));
+app.use('/sucursales', require('./routes/sucursalRoutes'));
 
 // Manejo de errores global
 app.use((err, req, res, next) => {
