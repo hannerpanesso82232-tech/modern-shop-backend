@@ -1,9 +1,22 @@
-const { Pedido, DetallePedido, Producto, Usuario, Transaccion, RutaLogistica, Configuracion, Credito, sequelize } = require('../models');
+const { Pedido, DetallePedido, Producto, Usuario, Transaccion, RutaLogistica, Configuracion, Credito, MovimientoKardex, sequelize } = require('../models');
 const { Op } = require('sequelize');
 
 // 🔥 Inyectamos Redis para poder limpiar el Caché del servidor cuando haya ventas/devoluciones 🔥
 let redis;
 try { redis = require('../config/redis'); } catch (e) { redis = null; }
+
+// 🔥 Helper del Kardex Logístico 🔥
+const registrarTrazaKardex = async (productoId, tipo, cantidad, costo_unitario, valor_total, saldo_stock, saldo_costo, referencia, usuarioId = null, tx = null) => {
+    try {
+        await MovimientoKardex.create({
+            productoId, usuarioId, tipo, cantidad, costo_unitario, valor_total,
+            saldo_stock_momento: saldo_stock, saldo_costo_promedio: saldo_costo,
+            sucursal_origen: 'Principal', sucursal_destino: 'Principal', referencia
+        }, { transaction: tx });
+    } catch (error) {
+        console.error("⚠️ Error interno al registrar en Kardex:", error);
+    }
+};
 
 const asignarRutaLogistica = async (ciudadCliente, direccion) => {
     const texto = `${ciudadCliente || ''} ${direccion || ''}`.toUpperCase();
@@ -87,13 +100,14 @@ exports.crearPedido = async (req, res) => {
 
         let totalAcumuladoReal = 0;
         const detallesParaNotificacion = []; 
-        const cambiosDeStock = []; // 🔥 Guardaremos los cambios aquí para avisar a todos
+        const cambiosDeStock = []; 
 
         for (const item of productos) {
             const prodId = item.producto_id || item.id;
             const producto = await Producto.findByPk(prodId);
             
             const precioGuardar = item.precio !== undefined ? parseFloat(item.precio) : parseFloat(producto.precio);
+            const costoVigente = parseFloat(producto.costo_compra || 0); // Para el Kardex
 
             await DetallePedido.create({
                 pedidoId: nuevoPedido.id,
@@ -105,8 +119,15 @@ exports.crearPedido = async (req, res) => {
             // 🔥 Calculamos y guardamos el nuevo stock 🔥
             const nuevoStock = producto.stock - item.cantidad;
             await producto.update({ stock: nuevoStock }, { transaction: t });
-            cambiosDeStock.push({ id: producto.id, nuevoStock: nuevoStock });
             
+            // 🔥 REGISTRO AUTOMÁTICO KARDEX (SALIDA POR VENTA) 🔥
+            await registrarTrazaKardex(
+                producto.id, 'SALIDA', item.cantidad, costoVigente, 
+                (item.cantidad * costoVigente), nuevoStock, costoVigente, 
+                `Venta - Orden #${nuevoPedido.id}`, req.user.id, t
+            );
+
+            cambiosDeStock.push({ id: producto.id, nuevoStock: nuevoStock });
             totalAcumuladoReal += precioGuardar * item.cantidad;
             detallesParaNotificacion.push({ nombre: producto.nombre, cantidad: item.cantidad });
         }
@@ -134,7 +155,6 @@ exports.crearPedido = async (req, res) => {
 
         await t.commit();
 
-        // 🔥 GOLPE MAESTRO A REDIS: Borramos el caché para que se actualice el inventario 🔥
         if (redis && typeof redis.del === 'function') {
             await redis.del('productos');
         }
@@ -152,7 +172,6 @@ exports.crearPedido = async (req, res) => {
                 timestamp: new Date()
             });
             
-            // Avisamos a TODOS los frontends el stock exacto
             cambiosDeStock.forEach(cambio => {
                 socketIO.emit('stockActualizado', cambio);
             });
@@ -237,7 +256,17 @@ exports.actualizarEstadoPedido = async (req, res) => {
                 const producto = await Producto.findByPk(item.productoId, { transaction: t });
                 if (producto) {
                     const nuevoStock = producto.stock + item.cantidad;
+                    const costoVigente = parseFloat(producto.costo_compra || 0);
+
                     await producto.update({ stock: nuevoStock }, { transaction: t });
+                    
+                    // 🔥 KARDEX: Anulación (Retorna el Stock) 🔥
+                    await registrarTrazaKardex(
+                        producto.id, 'ENTRADA', item.cantidad, costoVigente, 
+                        (item.cantidad * costoVigente), nuevoStock, costoVigente, 
+                        `Anulación - Orden #${pedido.id}`, req.user?.id, t
+                    );
+
                     cambiosDeStock.push({ id: producto.id, nuevoStock: nuevoStock });
                 }
             }
@@ -250,7 +279,17 @@ exports.actualizarEstadoPedido = async (req, res) => {
                 }
                 if (producto) {
                     const nuevoStock = producto.stock - item.cantidad;
+                    const costoVigente = parseFloat(producto.costo_compra || 0);
+
                     await producto.update({ stock: nuevoStock }, { transaction: t });
+
+                    // 🔥 KARDEX: Reactivación (Sale el Stock) 🔥
+                    await registrarTrazaKardex(
+                        producto.id, 'SALIDA', item.cantidad, costoVigente, 
+                        (item.cantidad * costoVigente), nuevoStock, costoVigente, 
+                        `Reactivación - Orden #${pedido.id}`, req.user?.id, t
+                    );
+
                     cambiosDeStock.push({ id: producto.id, nuevoStock: nuevoStock });
                 }
             }
@@ -369,7 +408,16 @@ exports.procesarDevolucion = async (req, res) => {
         let nuevoStockProd = 0;
         if (producto) {
             nuevoStockProd = producto.stock + cantidadDevuelta;
+            const costoVigente = parseFloat(producto.costo_compra || 0);
+
             await producto.update({ stock: nuevoStockProd }, { transaction: t });
+
+            // 🔥 KARDEX: Registro de la Devolución 🔥
+            await registrarTrazaKardex(
+                producto.id, 'DEVOLUCION', cantidadDevuelta, costoVigente, 
+                (cantidadDevuelta * costoVigente), nuevoStockProd, costoVigente, 
+                `Devolución Parcial - Orden #${pedido.id}`, req.user?.id, t
+            );
         }
 
         const nuevaCantidad = detalle.cantidad - cantidadDevuelta;
@@ -456,7 +504,17 @@ exports.cancelarPedidoCliente = async (req, res) => {
                 const producto = await Producto.findByPk(item.productoId, { transaction: t });
                 if (producto) {
                     const nuevoStock = producto.stock + item.cantidad;
+                    const costoVigente = parseFloat(producto.costo_compra || 0);
+
                     await producto.update({ stock: nuevoStock }, { transaction: t });
+
+                    // 🔥 KARDEX: Retorno por cancelación de cliente 🔥
+                    await registrarTrazaKardex(
+                        producto.id, 'ENTRADA', item.cantidad, costoVigente, 
+                        (item.cantidad * costoVigente), nuevoStock, costoVigente, 
+                        `Cancelación App Cliente - Orden #${pedido.id}`, usuarioId, t
+                    );
+
                     cambiosDeStock.push({ id: producto.id, nuevoStock: nuevoStock });
                 }
             }
