@@ -149,20 +149,22 @@ const SesionCaja = sequelize.define('SesionCaja', {
     estado: { type: DataTypes.ENUM('ABIERTA', 'CERRADA'), defaultValue: 'ABIERTA' }
 }, { tableName: 'sesiones_caja', timestamps: true });
 
-// --- 15. MODELO KARDEX VALORIZADO MULTISUCURSAL (NUEVO) 🔥 ---
+// 🔥 15. MODELO KARDEX VALORIZADO MULTISUCURSAL (ACTUALIZADO) 🔥
 const MovimientoKardex = sequelize.define('MovimientoKardex', {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     productoId: { type: DataTypes.INTEGER, allowNull: false, field: 'producto_id' },
     usuarioId: { type: DataTypes.INTEGER, allowNull: true, field: 'usuario_id' },
     tipo: { type: DataTypes.ENUM('ENTRADA', 'SALIDA', 'TRASLADO', 'AJUSTE', 'DEVOLUCION'), allowNull: false },
-    cantidad: { type: DataTypes.INTEGER, allowNull: false }, // Positivo o negativo
-    costo_unitario: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+    cantidad: { type: DataTypes.INTEGER, allowNull: false }, 
+    costo_unitario: { type: DataTypes.DECIMAL(12, 2), allowNull: false }, // Costo real de la factura
     valor_total: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
-    saldo_stock_momento: { type: DataTypes.INTEGER, allowNull: false }, // Foto del stock después del movimiento
-    saldo_costo_promedio: { type: DataTypes.DECIMAL(12, 2), allowNull: false }, // Foto del costo ponderado
+    stock_anterior: { type: DataTypes.INTEGER, defaultValue: 0 }, // 🔥 NUEVO: Memoria del stock antes del mov.
+    costo_anterior: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 }, // 🔥 NUEVO: Memoria del costo antes del mov.
+    saldo_stock_momento: { type: DataTypes.INTEGER, allowNull: false }, 
+    saldo_costo_promedio: { type: DataTypes.DECIMAL(12, 2), allowNull: false }, 
     sucursal_origen: { type: DataTypes.STRING(100), defaultValue: 'Principal' },
     sucursal_destino: { type: DataTypes.STRING(100), defaultValue: 'Principal' },
-    referencia: { type: DataTypes.STRING(255), allowNull: true }, // Ej: "Venta Ticket #104", "Compra Fac #992"
+    referencia: { type: DataTypes.STRING(255), allowNull: true }, 
     fecha: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
 }, { tableName: 'movimientos_kardex', timestamps: true });
 
