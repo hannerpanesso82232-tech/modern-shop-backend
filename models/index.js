@@ -132,7 +132,7 @@ const Proveedor = sequelize.define('Proveedor', {
     direccion: { type: DataTypes.TEXT, allowNull: true }
 }, { tableName: 'proveedores', timestamps: true });
 
-// --- 14. MODELO: SESIONES DE CAJA (NUEVO) 🔥 ---
+// --- 14. MODELO: SESIONES DE CAJA 🔥 ---
 const SesionCaja = sequelize.define('SesionCaja', {
     id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     usuarioId: { type: DataTypes.INTEGER, allowNull: false, field: 'usuario_id' }, // El Cajero
@@ -148,6 +148,47 @@ const SesionCaja = sequelize.define('SesionCaja', {
     observaciones: { type: DataTypes.TEXT, allowNull: true },
     estado: { type: DataTypes.ENUM('ABIERTA', 'CERRADA'), defaultValue: 'ABIERTA' }
 }, { tableName: 'sesiones_caja', timestamps: true });
+
+// --- 15. MODELO KARDEX VALORIZADO MULTISUCURSAL (NUEVO) 🔥 ---
+const MovimientoKardex = sequelize.define('MovimientoKardex', {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    productoId: { type: DataTypes.INTEGER, allowNull: false, field: 'producto_id' },
+    usuarioId: { type: DataTypes.INTEGER, allowNull: true, field: 'usuario_id' },
+    tipo: { type: DataTypes.ENUM('ENTRADA', 'SALIDA', 'TRASLADO', 'AJUSTE', 'DEVOLUCION'), allowNull: false },
+    cantidad: { type: DataTypes.INTEGER, allowNull: false }, // Positivo o negativo
+    costo_unitario: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+    valor_total: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+    saldo_stock_momento: { type: DataTypes.INTEGER, allowNull: false }, // Foto del stock después del movimiento
+    saldo_costo_promedio: { type: DataTypes.DECIMAL(12, 2), allowNull: false }, // Foto del costo ponderado
+    sucursal_origen: { type: DataTypes.STRING(100), defaultValue: 'Principal' },
+    sucursal_destino: { type: DataTypes.STRING(100), defaultValue: 'Principal' },
+    referencia: { type: DataTypes.STRING(255), allowNull: true }, // Ej: "Venta Ticket #104", "Compra Fac #992"
+    fecha: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
+}, { tableName: 'movimientos_kardex', timestamps: true });
+
+// --- 16. MODELO RRHH: EMPLEADOS (NUEVO) 🔥 ---
+const Empleado = sequelize.define('Empleado', {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    nombre: { type: DataTypes.STRING(150), allowNull: false },
+    documento: { type: DataTypes.STRING(50), unique: true, allowNull: false },
+    cargo: { type: DataTypes.STRING(100), allowNull: false },
+    salario_base: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 },
+    tipo_contrato: { type: DataTypes.STRING(50), defaultValue: 'Fijo' },
+    fecha_ingreso: { type: DataTypes.DATEONLY, allowNull: true },
+    telefono: { type: DataTypes.STRING(50), allowNull: true },
+    estado: { type: DataTypes.ENUM('ACTIVO', 'INACTIVO', 'VACACIONES', 'PERMISO'), defaultValue: 'ACTIVO' }
+}, { tableName: 'empleados', timestamps: true });
+
+// --- 17. MODELO RRHH: ASISTENCIAS (NUEVO) 🔥 ---
+const Asistencia = sequelize.define('Asistencia', {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    empleadoId: { type: DataTypes.INTEGER, allowNull: false, field: 'empleado_id' },
+    fecha: { type: DataTypes.DATEONLY, allowNull: false },
+    hora_entrada: { type: DataTypes.TIME, allowNull: true },
+    hora_salida: { type: DataTypes.TIME, allowNull: true },
+    horas_trabajadas: { type: DataTypes.DECIMAL(5, 2), defaultValue: 0 },
+    novedad: { type: DataTypes.STRING(255), allowNull: true } // Ej: "Llegó tarde", "Falta injustificada"
+}, { tableName: 'asistencias', timestamps: true });
 
 
 // --- RELACIONES ---
@@ -181,12 +222,22 @@ Credito.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
 Credito.hasMany(Abono, { foreignKey: 'creditoId', as: 'Abonos' });
 Abono.belongsTo(Credito, { foreignKey: 'creditoId', as: 'Credito' });
 
-// Relaciones para Sesión de Caja
 Usuario.hasMany(SesionCaja, { foreignKey: 'usuarioId', as: 'SesionesCaja' });
 SesionCaja.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Cajero' });
+
+// 🔥 NUEVAS RELACIONES (Kardex y RRHH) 🔥
+Producto.hasMany(MovimientoKardex, { foreignKey: 'productoId', as: 'HistorialKardex' });
+MovimientoKardex.belongsTo(Producto, { foreignKey: 'productoId', as: 'Producto' });
+
+Usuario.hasMany(MovimientoKardex, { foreignKey: 'usuarioId', as: 'MovimientosRealizados' });
+MovimientoKardex.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'Usuario' });
+
+Empleado.hasMany(Asistencia, { foreignKey: 'empleadoId', as: 'Asistencias' });
+Asistencia.belongsTo(Empleado, { foreignKey: 'empleadoId', as: 'Empleado' });
 
 module.exports = { 
     sequelize, Usuario, Producto, Pedido, DetallePedido, 
     Categoria, Favorito, Direccion, Configuracion, Transaccion, 
-    RutaLogistica, Credito, Abono, Proveedor, SesionCaja
+    RutaLogistica, Credito, Abono, Proveedor, SesionCaja,
+    MovimientoKardex, Empleado, Asistencia // 🔥 Añadimos los modelos exportados
 };

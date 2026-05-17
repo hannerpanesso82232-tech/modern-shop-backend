@@ -57,6 +57,9 @@ app.use('/contabilidad', require('./routes/contabilidadRoutes'));
 app.use('/creditos', require('./routes/creditoRoutes'));
 app.use('/proveedores', require('./routes/proveedorRoutes'));
 app.use('/caja', require('./routes/cajaRoutes'));
+app.use('/kardex', require('./routes/kardexRoutes'));
+app.use('/rrhh', require('./routes/rrhhRoutes'));
+app.use('/reportes-bi', require('./routes/reportesRoutes'));
 
 // Manejo de errores global
 app.use((err, req, res, next) => {
