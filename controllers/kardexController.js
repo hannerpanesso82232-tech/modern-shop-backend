@@ -9,24 +9,24 @@ exports.registrarMovimiento = async (req, res) => {
         const producto = await Producto.findByPk(productoId, { transaction: t });
         if (!producto) return res.status(404).json({ error: "Producto no encontrado" });
 
-        let nuevoStock = parseInt(producto.stock);
-        let nuevoCostoPromedio = parseFloat(producto.costo_compra || 0);
+        let stockAnterior = parseInt(producto.stock);
+        let costoAnterior = parseFloat(producto.costo_compra || 0);
+        
+        let nuevoStock = stockAnterior;
+        let nuevoCostoPromedio = costoAnterior;
         const cantMov = parseInt(cantidad);
-        const costUnit = parseFloat(costo_unitario || producto.costo_compra || 0);
+        const costUnit = parseFloat(costo_unitario || costoAnterior);
 
         if (tipo === 'ENTRADA' || tipo === 'DEVOLUCION') {
-            const costoTotalActual = nuevoStock * nuevoCostoPromedio;
+            const costoTotalActual = stockAnterior * costoAnterior;
             const costoTotalNuevo = cantMov * costUnit;
             nuevoStock += cantMov;
             nuevoCostoPromedio = nuevoStock > 0 ? (costoTotalActual + costoTotalNuevo) / nuevoStock : costUnit;
         } else if (tipo === 'SALIDA' || tipo === 'AJUSTE') {
             nuevoStock -= cantMov;
-        } else if (tipo === 'TRASLADO') {
-            // En un ecosistema multisucursal estricto, el stock global se mantiene, 
-            // pero registramos la traza de qué sucursal cede y cuál recibe.
         }
 
-        // Actualizamos el producto con el nuevo stock y costo recalculado
+        // Actualizamos el producto global (Bodega Central)
         await producto.update({
             stock: Math.max(0, nuevoStock),
             costo_compra: nuevoCostoPromedio
@@ -37,6 +37,8 @@ exports.registrarMovimiento = async (req, res) => {
         const movimiento = await MovimientoKardex.create({
             productoId, usuarioId, tipo, cantidad: cantMov,
             costo_unitario: costUnit, valor_total: valorTotal,
+            stock_anterior: stockAnterior, // 🔥 MEMORIA
+            costo_anterior: costoAnterior, // 🔥 MEMORIA
             saldo_stock_momento: Math.max(0, nuevoStock),
             saldo_costo_promedio: nuevoCostoPromedio,
             sucursal_origen, sucursal_destino, referencia
@@ -46,6 +48,7 @@ exports.registrarMovimiento = async (req, res) => {
         res.status(201).json(movimiento);
     } catch (error) {
         await t.rollback();
+        console.error(error);
         res.status(500).json({ error: "Error al procesar movimiento en Kardex" });
     }
 };

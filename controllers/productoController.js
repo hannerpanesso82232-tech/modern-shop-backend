@@ -17,20 +17,49 @@ const registrarTrazaKardex = async (productoId, tipo, cantidad, costo_unitario, 
     }
 };
 
+
 exports.obtenerProductos = async (req, res) => {
     try {
-        const productosCacheados = await redisClient.get('catalogo_productos');
-        if (productosCacheados) return res.json(JSON.parse(productosCacheados));
+        const { Usuario, InventarioSucursal } = require('../models');
         
-        const productos = await Producto.findAll({ 
-            include: [{ model: Categoria, as: 'Categoria', attributes: ['nombre'] }], 
-            order: [['id', 'DESC']] 
+        // ¿Quién está pidiendo el catálogo?
+        let sucursalId = null;
+        if (req.user && req.user.id) {
+            const usuarioActual = await Usuario.findByPk(req.user.id);
+            sucursalId = usuarioActual?.sucursalId;
+        }
+
+        // Si es el Admin (Bodega Central) intentamos cargar rápido desde Caché
+        if (!sucursalId) {
+            const productosCacheados = await redisClient.get('catalogo_productos');
+            if (productosCacheados) return res.json(JSON.parse(productosCacheados));
+        }
+
+        const productos = await Producto.findAll({
+            include: [{ model: Categoria, as: 'Categoria', attributes: ['nombre'] }],
+            order: [['id', 'DESC']]
         });
-        
+
+        // 🔥 MAGIA: Si es un Cajero de sucursal, le inyectamos su Stock Local 🔥
+        if (sucursalId) {
+            const inventarioLocal = await InventarioSucursal.findAll({ where: { sucursalId } });
+            const mapaStock = {};
+            inventarioLocal.forEach(inv => mapaStock[inv.productoId] = inv.stock_local);
+
+            const productosMapeados = productos.map(p => {
+                const prodJSON = p.toJSON();
+                prodJSON.stock = mapaStock[prod.id] || 0; // Si no le enviaron stock a esta tienda, es 0
+                return prodJSON;
+            });
+            return res.json(productosMapeados);
+        }
+
+        // Si es el Administrador, devolvemos el catálogo global intacto
         await redisClient.setEx('catalogo_productos', 3600, JSON.stringify(productos));
         res.json(productos);
-    } catch (error) { 
-        res.status(500).json({ error: "Error al obtener productos" }); 
+    } catch (error) {
+        console.error("❌ Error en obtenerProductos:", error);
+        res.status(500).json({ error: "Error al obtener productos" });
     }
 };
 
